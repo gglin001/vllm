@@ -20,7 +20,7 @@
         // "FETCHCONTENT_BASE_DIR": "${sourceDir}/_demos/_deps",
         // "FETCHCONTENT_FULLY_DISCONNECTED": false,
         // "FETCHCONTENT_UPDATES_DISCONNECTED": true,
-        "VLLM_PYTHON_EXECUTABLE": "/root/micromamba/envs/pyenv/bin/python",
+        "VLLM_PYTHON_EXECUTABLE": "/usr/bin/python3",
         "VLLM_CUTLASS_SRC_DIR": "${sourceDir}/3rd/cutlass",
         "FLASH_MLA_SRC_DIR": "${sourceDir}/3rd/FlashMLA",
         "VLLM_FLASH_ATTN_SRC_DIR": "${sourceDir}/3rd/flash-attention",
