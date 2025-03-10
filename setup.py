@@ -682,8 +682,8 @@ else:
 setup(
     # static metadata should rather go in pyproject.toml
     version=get_vllm_version(),
-    ext_modules=ext_modules,
-    install_requires=get_requirements(),
+    # ext_modules=ext_modules,
+    # install_requires=get_requirements(),
     extras_require={
         "tensorizer": ["tensorizer>=2.9.0"],
         "runai": ["runai-model-streamer", "runai-model-streamer-s3", "boto3"],
