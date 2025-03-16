@@ -14,6 +14,11 @@
     {
       "name": "demo",
       "inherits": "base",
+      "environment": {
+        "MAX_JOBS": "16",
+        "TORCH_CUDA_ARCH_LIST": "8.6",
+        "VLLM_FA_CMAKE_GPU_ARCHES": "8.6"
+      },
       "cacheVariables": {
         // "FETCHCONTENT_BASE_DIR": "${sourceDir}/_demos/_deps",
         // "FETCHCONTENT_FULLY_DISCONNECTED": false,
