@@ -682,7 +682,7 @@ else:
 setup(
     # static metadata should rather go in pyproject.toml
     version=get_vllm_version(),
-    # ext_modules=ext_modules,
+    ext_modules=ext_modules,
     # install_requires=get_requirements(),
     extras_require={
         "tensorizer": ["tensorizer>=2.9.0"],
@@ -690,6 +690,6 @@ setup(
         "audio": ["librosa", "soundfile"],  # Required for audio processing
         "video": ["decord"]  # Required for video processing
     },
-    cmdclass=cmdclass,
+    # cmdclass=cmdclass,
     package_data=package_data,
 )

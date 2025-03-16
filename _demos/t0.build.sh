@@ -22,13 +22,15 @@ pushd flash-attention && git submodule update --init --depth 1 && popd
 rm -rf build/CMakeCache.txt
 rm -rf build/CMakeFiles
 
-cmake --preset demo -S. -Bbuild
+# cmake --preset demo -S. -Bbuild
+cmake --preset allen_demo -S. -Bbuild
 
 # cmake --build build -t all
 cmake --build build -t install
 
 ###############################################################################
 
-pip install --no-build-isolation -e .
+VLLM_USE_PRECOMPILED=1 \
+  pip install --no-build-isolation -e .
 
 ###############################################################################

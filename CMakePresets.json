@@ -8,9 +8,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/vllm",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "CMAKE_INSTALL_RPATH_USE_LINK_PATH": true,
-        "AA": "BB"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
       }
     },
     {
