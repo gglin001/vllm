@@ -202,3 +202,6 @@ benchmarks/**/*.json
 # Linting
 actionlint
 shellcheck*/
+
+vllm/include
+vllm/test/cutlass/CTestTestfile.cmake

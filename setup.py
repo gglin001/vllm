@@ -682,7 +682,8 @@ else:
 setup(
     # static metadata should rather go in pyproject.toml
     version=get_vllm_version(),
-    ext_modules=ext_modules,
+    # NOTE: must disable if use `cmake --build build -t install`
+    # ext_modules=ext_modules,
     # install_requires=get_requirements(),
     extras_require={
         "tensorizer": ["tensorizer>=2.9.0"],

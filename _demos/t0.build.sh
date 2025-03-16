@@ -28,9 +28,12 @@ cmake --preset allen_demo -S. -Bbuild
 # cmake --build build -t all
 cmake --build build -t install
 
+# TODO: fix from cmake
+find vllm/vllm/* -printf "%f\n" | xargs -d "\n" -I{} ln -s $PWD/vllm/vllm/{} $PWD/vllm/{}
+
 ###############################################################################
 
 VLLM_USE_PRECOMPILED=1 \
-  pip install --no-build-isolation -e .
+  pip install --no-build-isolation -e . -vvv
 
 ###############################################################################
