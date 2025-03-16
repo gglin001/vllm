@@ -29,9 +29,9 @@ def main(args: dict):
     # objects that contain the prompt, generated text, and other information.
     prompts = [
         "Hello, my name is",
-        "The president of the United States is",
-        "The capital of France is",
-        "The future of AI is",
+        # "The president of the United States is",
+        # "The capital of France is",
+        # "The future of AI is",
     ]
     outputs = llm.generate(prompts, sampling_params)
     # Print the outputs.
@@ -46,7 +46,16 @@ if __name__ == "__main__":
     # Add engine args
     engine_group = parser.add_argument_group("Engine arguments")
     EngineArgs.add_cli_args(engine_group)
-    engine_group.set_defaults(model="meta-llama/Llama-3.2-1B-Instruct")
+    engine_group.set_defaults(model="/Users/allen/repos/_hf/Llama-3.2-1B-Instruct")
+    # engine_group.set_defaults(model="/repos/_hf/pythia-70m-deduped")
+
+    # local debug
+    engine_group.set_defaults(enforce_eager=True)
+    engine_group.set_defaults(disable_custom_all_reduce=True)
+    engine_group.set_defaults(trust_remote_code=True)
+    # engine_group.set_defaults(tensor_parallel_size=2)
+    # engine_group.set_defaults(pipeline_parallel_size=1)
+
     # Add sampling params
     sampling_group = parser.add_argument_group("Sampling parameters")
     sampling_group.add_argument("--max-tokens", type=int)
