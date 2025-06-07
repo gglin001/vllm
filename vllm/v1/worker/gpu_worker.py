@@ -67,14 +67,6 @@ class Worker(WorkerBase):
             torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
             logger.info("Profiling enabled. Traces will be saved to: %s",
                         torch_profiler_trace_dir)
-            # fmt: off
-            import socket
-            from vllm.distributed.parallel_state import get_dp_group
-            tp_rank = get_tp_group().rank
-            dp_rank = get_dp_group().rank
-            worker_name = f"{socket.gethostname()}_{os.getpid()}"
-            worker_name = f"dp_{dp_rank}_tp_{tp_rank}_{worker_name}"
-            # fmt: on
             self.profiler = torch.profiler.profile(
                 activities=[
                     torch.profiler.ProfilerActivity.CPU,
@@ -82,10 +74,7 @@ class Worker(WorkerBase):
                 ],
                 with_stack=True,
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                    torch_profiler_trace_dir,
-                    use_gzip=True,
-                    worker_name=worker_name,
-                ))
+                    torch_profiler_trace_dir, use_gzip=True))
         else:
             self.profiler = None
 
@@ -159,6 +148,23 @@ class Worker(WorkerBase):
         if self.rank == 0:
             # If usage stat is enabled, collect relevant info.
             report_usage_stats(self.vllm_config)
+
+        if envs.VLLM_TORCH_PROFILER_DIR:
+            assert self.profiler is not None
+            # fmt: off
+            import socket
+            from vllm.distributed.parallel_state import get_dp_group
+            tp_rank = get_tp_group().rank
+            dp_rank = get_dp_group().rank
+            worker_name = f"{socket.gethostname()}_{os.getpid()}"
+            worker_name = f"dp_{dp_rank}_tp_{tp_rank}_{worker_name}"
+            # fmt: on
+            torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
+            self.profiler.on_trace_ready = torch.profiler.tensorboard_trace_handler(
+                torch_profiler_trace_dir,
+                use_gzip=True,
+                worker_name=worker_name,
+            )
 
     # FIXME(youkaichao & ywang96): Use TorchDispatchMode instead of memory pool
     # to hijack tensor allocation.
