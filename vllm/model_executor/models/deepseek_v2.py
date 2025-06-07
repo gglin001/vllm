@@ -56,6 +56,12 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
 
+# fmt: off
+import traceback
+from vllm.utils import init_logger
+logger = init_logger(__name__)
+# fmt: on
+
 
 class DeepseekV2MLP(nn.Module):
 
@@ -700,6 +706,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
         self.logits_processor = LogitsProcessor(config.vocab_size)
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors)
+        logger.error(f"self.model: \n\n{self.model}\n\n")
+        # logger.error(f'traceback: \n\n{"".join(traceback.format_stack())}\n\n')
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
@@ -784,6 +792,10 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                 if is_pp_missing_parameter(name, self):
                     continue
 
+                # skip for `--hf_overrides` , eg: `--hf_overrides '{"num_hidden_layers": 4}'`
+                if name not in params_dict:
+                    continue
+
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -796,6 +808,9 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                     name = name.replace(weight_name, param_name)
 
                     if is_pp_missing_parameter(name, self):
+                        continue
+                    
+                    if name not in params_dict:
                         continue
 
                     param = params_dict[name]
@@ -817,6 +832,9 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                         continue
 
                     if is_pp_missing_parameter(name, self):
+                        continue
+
+                    if name not in params_dict:
                         continue
 
                     param = params_dict[name]
