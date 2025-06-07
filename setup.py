@@ -686,8 +686,8 @@ setup(
     # static metadata should rather go in pyproject.toml
     version=get_vllm_version(),
     # NOTE: must disable if use `cmake --build build -t install`
-    # ext_modules=ext_modules,
-    # install_requires=get_requirements(),
+    ext_modules=ext_modules,
+    install_requires=get_requirements(),
     extras_require={
         "bench": ["pandas", "datasets"],
         "tensorizer": ["tensorizer>=2.9.0"],
@@ -696,6 +696,6 @@ setup(
         "audio": ["librosa", "soundfile"],  # Required for audio processing
         "video": []  # Kept for backwards compatibility
     },
-    # cmdclass=cmdclass,
+    cmdclass=cmdclass,
     package_data=package_data,
 )
