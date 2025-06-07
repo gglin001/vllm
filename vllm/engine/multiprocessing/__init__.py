@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import uuid
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from vllm.lora.request import LoRARequest
 from vllm.outputs import RequestOutput
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
-from vllm.utils import deprecate_kwargs
+from vllm.utils import Device, deprecate_kwargs
 
 VLLM_RPC_SUCCESS_STR = "SUCCESS"
 
@@ -123,8 +124,13 @@ class RPCUProfileRequest(Enum):
     STOP_PROFILE = 2
 
 
-class RPCResetPrefixCacheRequest(Enum):
-    RESET_PREFIX_CACHE = 1
+class RPCResetMultiModalCacheRequest(Enum):
+    RESET = 1
+
+
+@dataclass
+class RPCResetPrefixCacheRequest:
+    device: Device
 
 
 class RPCSleepRequest(Enum):
@@ -132,8 +138,9 @@ class RPCSleepRequest(Enum):
     SLEEP_LEVEL_2 = 2
 
 
-class RPCWakeUpRequest(Enum):
-    WAKE_UP = 1
+@dataclass
+class RPCWakeUpRequest:
+    tags: Optional[list[str]] = None
 
 
 @dataclass
@@ -162,6 +169,7 @@ class RPCAdapterLoadedResponse:
 
 RPC_REQUEST_T = Union[RPCProcessRequest, RPCAbortRequest, RPCStartupRequest,
                       RPCUProfileRequest, RPCLoadAdapterRequest,
+                      RPCResetMultiModalCacheRequest,
                       RPCResetPrefixCacheRequest, RPCSleepRequest,
                       RPCWakeUpRequest, RPCIsSleepingRequest]
 
