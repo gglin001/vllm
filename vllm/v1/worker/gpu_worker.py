@@ -67,6 +67,14 @@ class Worker(WorkerBase):
             torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
             logger.info("Profiling enabled. Traces will be saved to: %s",
                         torch_profiler_trace_dir)
+            # fmt: off
+            import socket
+            from vllm.distributed.parallel_state import get_dp_group
+            tp_rank = get_tp_group().rank
+            dp_rank = get_dp_group().rank
+            worker_name = f"{socket.gethostname()}_{os.getpid()}"
+            worker_name = f"dp_{dp_rank}_tp_{tp_rank}_{worker_name}"
+            # fmt: on
             self.profiler = torch.profiler.profile(
                 activities=[
                     torch.profiler.ProfilerActivity.CPU,
@@ -74,7 +82,10 @@ class Worker(WorkerBase):
                 ],
                 with_stack=True,
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                    torch_profiler_trace_dir, use_gzip=True))
+                    torch_profiler_trace_dir,
+                    use_gzip=True,
+                    worker_name=worker_name,
+                ))
         else:
             self.profiler = None
 
