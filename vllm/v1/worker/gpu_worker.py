@@ -154,8 +154,9 @@ class Worker(WorkerBase):
             # fmt: off
             import socket
             from vllm.distributed.parallel_state import get_dp_group
-            tp_rank = get_tp_group().rank
-            dp_rank = get_dp_group().rank
+            tp_rank = get_tp_group().rank_in_group
+            dp_size = self.vllm_config.parallel_config.data_parallel_size
+            dp_rank = get_dp_group().rank_in_group if dp_size > 1 else 0
             worker_name = f"{socket.gethostname()}_{os.getpid()}"
             worker_name = f"dp_{dp_rank}_tp_{tp_rank}_{worker_name}"
             # fmt: on
