@@ -45,9 +45,9 @@ def main(args: dict):
     # objects that contain the prompt, generated text, and other information.
     prompts = [
         "Hello, my name is",
-        # "The president of the United States is",
-        # "The capital of France is",
-        # "The future of AI is",
+        "The president of the United States is",
+        "The capital of France is",
+        "The future of AI is",
     ]
     outputs = llm.generate(prompts, sampling_params)
     # Print the outputs.
