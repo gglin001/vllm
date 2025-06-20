@@ -60,6 +60,7 @@ class _Backend(enum.Enum):
     BLOCK_SPARSE_FLASH_ATTN = enum.auto()
     DUAL_CHUNK_FLASH_ATTN = enum.auto()
     NO_ATTENTION = enum.auto()
+    FLEX_ATTENTION = enum.auto()
 
 
 class PlatformEnum(enum.Enum):
@@ -298,6 +299,13 @@ class Platform:
             torch.manual_seed(seed)
 
     @classmethod
+    def set_device(cls, device: torch.device) -> None:
+        """
+        Set the device for the current platform.
+        """
+        torch.cuda.set_device(device)
+
+    @classmethod
     def pre_register_and_update(cls,
                                 parser: Optional[FlexibleArgumentParser] = None
                                 ) -> None:
@@ -477,6 +485,13 @@ class Platform:
         model configuration.
         """
         return False
+
+    @classmethod
+    def default_v1(cls, model_config: ModelConfig) -> bool:
+        """
+        Returns whether the current platform supports v1 by default.
+        """
+        return cls.supports_v1(model_config)
 
     @classmethod
     def use_custom_allreduce(cls) -> bool:
