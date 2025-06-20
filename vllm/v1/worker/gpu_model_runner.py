@@ -373,7 +373,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                            total_num_scheduled_tokens))]
         return None
 
-    def _is_dummy_ubatch(self, ubatch_slice: UBatchSlices) -> bool:
+    def _is_dummy_ubatch(self, ubatch_slice: UbatchSlice) -> bool:
+        if ubatch_slice is None:
+            return True
         return ubatch_slice[1].start >= ubatch_slice[1].stop
 
     # Note: used for model runner override.
@@ -706,7 +708,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.query_start_loc_np, max_num_scheduled_tokens,
             scheduler_output)
         logger.debug(f"_prepare_inputs {ubatch_slices=}")
-        if self._is_dummy_ubatch(ubatch_slices):
+        if self._is_dummy_ubatch(ubatch_slices[1]):
             ubatch_slices = None
             logger.debug(f"_prepare_inputs set ubatch_slices = None")
 

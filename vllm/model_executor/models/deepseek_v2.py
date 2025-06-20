@@ -889,7 +889,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
         self.logits_processor = LogitsProcessor(config.vocab_size)
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors)
-        logger.error(f"self.model: \n\n{self.model}\n\n")
+        # logger.error(f"self.model: \n\n{self.model}\n\n")
         # logger.error(f'traceback: \n\n{"".join(traceback.format_stack())}\n\n')
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
