@@ -652,8 +652,9 @@ class DeepseekV2DecoderLayer(nn.Module):
         self.mlp: "DeepseekV2MoE"
         self.mlp.experts: "FusedMoE"  # type: ignore
         # 0, no split mlp
-        # final_hidden_states_0 = self.mlp(hidden_states_0)
+        final_hidden_states_0 = self.mlp(hidden_states_0)
         #
+        """
         # 0, shared_experts
         if self.mlp.n_shared_experts is not None:
             shared_output_0 = self.mlp.shared_experts(hidden_states_0)
@@ -673,6 +674,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         # 0, shared_experts
         if shared_output_0 is not None:
             final_hidden_states_0 = final_hidden_states_0 + shared_output_0
+        """
+
         return final_hidden_states_0, residual_0
 
     def forward_ubatch_prefill_1(
@@ -699,8 +702,9 @@ class DeepseekV2DecoderLayer(nn.Module):
         self.mlp: "DeepseekV2MoE"
         self.mlp.experts: "FusedMoE"  # type: ignore
         # 1, no split mlp
-        # final_hidden_states_1 = self.mlp(hidden_states_1)
+        final_hidden_states_1 = self.mlp(hidden_states_1)
         #
+        """
         # 1, shared_experts
         if self.mlp.n_shared_experts is not None:
             shared_output_1 = self.mlp.shared_experts(hidden_states_1)
@@ -720,6 +724,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         # 1, shared_experts
         if shared_output_1 is not None:
             final_hidden_states_1 = final_hidden_states_1 + shared_output_1
+        """
+
         return final_hidden_states_1, residual_1
 
 
@@ -801,15 +807,15 @@ class DeepseekV2Model(nn.Module):
             # logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
 
             # TODO(allen): rm , here just for debug
-            # """
+            """
             logger.debug(f"set forward_context.ub_metadata.ubatch_index = -1")
             forward_context.ub_metadata.ubatch_index = -1
             for layer in self.layers[self.start_layer:self.end_layer]:
                 hidden_states, residual = layer(positions, hidden_states,
                                                 residual)
-            # """
-            #
             """
+            #
+            # """
             num_no_ubatch_layers = self.config.first_k_dense_replace
             for i in range(num_no_ubatch_layers):
                 layer = self.layers[i]
@@ -817,7 +823,7 @@ class DeepseekV2Model(nn.Module):
                                                 residual)
             hidden_states, residual = self.forward_ubatch(
                 positions, hidden_states, residual, num_no_ubatch_layers)
-            """
+            # """
             logger.debug(f"ubatch fin")
         else:
             for layer in self.layers[self.start_layer:self.end_layer]:
@@ -856,8 +862,8 @@ class DeepseekV2Model(nn.Module):
             ub_metadata.ubatch_slices[1][1]]
 
         for idx in range(start_layer, end_layer):
-            hidden_states_0, residual_0, hidden_states_1, residual_1 = self.layers[
-                idx].forward_ubatch_prefill(
+            hidden_states_0, residual_0, hidden_states_1, residual_1 = \
+                self.layers[idx].forward_ubatch_prefill(
                     positions_0,
                     hidden_states_0,
                     residual_0,

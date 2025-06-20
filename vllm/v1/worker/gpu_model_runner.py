@@ -711,13 +711,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.query_start_loc_np[0] = 0
         self.query_start_loc_np[1:num_reqs + 1] = cu_num_tokens
 
-        ubatch_slices: Optional[UBatchSlices] = self._ubatch_split(
-            self.query_start_loc_np, max_num_scheduled_tokens,
-            scheduler_output)
-        logger.debug(f"_prepare_inputs {ubatch_slices=}")
-        if self._is_dummy_ubatch(ubatch_slices[1]):
-            ubatch_slices = None
-            logger.debug(f"_prepare_inputs set ubatch_slices = None")
+        ubatch_slices = None
+        if self.use_ub:
+            ubatch_slices: Optional[UBatchSlices] = self._ubatch_split(
+                self.query_start_loc_np, max_num_scheduled_tokens,
+                scheduler_output)
+            logger.debug(f"_prepare_inputs {ubatch_slices=}")
+            if self._is_dummy_ubatch(ubatch_slices[1]):
+                ubatch_slices = None
+                logger.debug(f"_prepare_inputs set ubatch_slices = None")
 
         self.seq_lens_np[:num_reqs] = (
             self.input_batch.num_computed_tokens_cpu[:num_reqs] +
@@ -1709,7 +1711,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     def kv_connector_no_forward(
             self, scheduler_output: "SchedulerOutput") -> ModelRunnerOutput:
         # KV send/recv even if no work to do.
-        with set_forward_context(None, self.vllm_config, dp_metadata=DPMetadata(None, None, None)):
+        with set_forward_context(
+                None,
+                self.vllm_config,
+                dp_metadata=DPMetadata(None, None, None),
+        ):
             self.maybe_setup_kv_connector(scheduler_output)
             finished_sending, finished_recving = (
                 self.get_finished_kv_transfers(scheduler_output))
@@ -1952,7 +1958,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     high=self.model_config.get_vocab_size(),
                     dtype=input_ids.dtype)
 
-            logger.debug("Randomizing dummy data for DP Rank")
+            # logger.debug("Randomizing dummy data for DP Rank")
             input_ids.copy_(rand_input_ids()[:input_ids.size(0)],
                             non_blocking=True)
             yield
@@ -1968,6 +1974,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # # Padding for DP
         # num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
         # num_tokens += num_pad
+        # logger.error(f'traceback: \n\n{"".join(traceback.format_stack())}\n\n')
 
         # Set num_scheduled_tokens based on num_tokens and max_num_seqs
         # for dummy run with LoRA so that the num_reqs collectively
@@ -2018,6 +2025,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         else:
             num_tokens_dp = num_tokens
             support_ubatch = True
+        dp_metadata = None
         if self.use_dp:
             dp_metadata = DPMetadata.make_ubatch(
                 self.parallel_config,
@@ -2028,28 +2036,27 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
             if num_tokens == 1:
                 num_tokens = 1 if not dp_metadata.support_ubatch else 2
-        else:
-            dp_metadata = None
 
-        if num_tokens > 1:
-            # profile or capture or padded==2 for ub
-            ubatch_slices = [
-                (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
-                (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
-            ]
-        elif num_tokens == 1:
-            # dummy run without padding
-            ubatch_slices = None
-            # TODO: rm it just for debug
-            # num_tokens = 2
-            # ubatch_slices = [
-            #     (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
-            #     (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
-            # ]
-        else:
-            ubatch_slices = None
-        logger.debug(f"_dummy_run {ubatch_slices=}")
-        # logger.error(f'traceback: \n\n{"".join(traceback.format_stack())}\n\n')
+        ubatch_slices = None
+        if self.use_ub:
+            if num_tokens > 1:
+                # profile or capture or padded==2 for ub
+                ubatch_slices = [
+                    (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
+                    (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
+                ]
+            elif num_tokens == 1:
+                # dummy run without padding
+                ubatch_slices = None
+                # TODO: rm it just for debug
+                # num_tokens = 2
+                # ubatch_slices = [
+                #     (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
+                #     (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
+                # ]
+            else:
+                ubatch_slices = None
+            logger.debug(f"_dummy_run {ubatch_slices=}")
         ub_metadata = UBMetadata(ubatch_slices)
 
         with self.maybe_dummy_run_with_lora(self.lora_config,
