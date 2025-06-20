@@ -6,7 +6,7 @@ import gc
 import time
 import weakref
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, TypeAlias
 
 import numpy as np
 import torch
@@ -28,7 +28,7 @@ from vllm.distributed.parallel_state import (
     get_pp_group, get_tp_group, graph_capture,
     prepare_communication_buffer_for_model)
 from vllm.forward_context import (DPMetadata, get_forward_context,
-                                  set_forward_context)
+                                  set_forward_context, UBMetadata)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.mamba.mamba_mixer2 import MambaMixer2
 from vllm.model_executor.layers.rotary_embedding import MRotaryEmbedding
@@ -82,6 +82,14 @@ else:
         "xgrammar.kernels.apply_token_bitmask_inplace_torch_compile")
 
 logger = init_logger(__name__)
+
+AttnMetadataDict: TypeAlias = dict[str, Any]
+# list when ubatching is enabled
+PerLayerAttnMetadata: TypeAlias = Union[list[AttnMetadataDict],
+                                        AttnMetadataDict]
+
+UbatchSlice: TypeAlias = tuple[slice, slice]
+UBatchSlices: TypeAlias = list[UbatchSlice]
 
 
 class GPUModelRunner(LoRAModelRunnerMixin):
@@ -305,6 +313,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # from the KV cache of `shared_kv_cache_layers[layer_name]`.
         self.shared_kv_cache_layers: dict[str, str] = {}
 
+        self.use_ubatch = parallel_config.enable_microbatching
+
     def _may_reorder_batch(self, scheduler_output: "SchedulerOutput") -> bool:
         """
         Update the order of requests in the batch based on the attention
@@ -329,6 +339,44 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             assert not self.attn_metadata_builders[i].reorder_batch(
                 self.input_batch, scheduler_output)
         return batch_reordered
+
+    def _ubatch_split(
+            self, query_start_loc_np: torch.Tensor,
+            max_num_scheduled_tokens: int,
+            scheduler_output: "SchedulerOutput") -> Optional[UBatchSlices]:
+        total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+        num_reqs = self.input_batch.num_reqs
+
+        if self.parallel_config.enable_microbatching and \
+            total_num_scheduled_tokens >= self.parallel_config.microbatching_token_threshold \
+                and max_num_scheduled_tokens == 1:
+            # For pure decode we can just create ubatchs by cutting the request
+            # in half
+            b0_reqs_end = num_reqs // 2
+            b0_tokens_end = total_num_scheduled_tokens // 2
+            assert b0_reqs_end < num_reqs and b0_tokens_end < total_num_scheduled_tokens
+            return [
+                (slice(0, b0_reqs_end), slice(0, b0_tokens_end)),
+                (slice(b0_reqs_end, num_reqs),
+                 slice(b0_tokens_end, total_num_scheduled_tokens)),
+            ]
+
+        if self.parallel_config.enable_microbatching and \
+            self.parallel_config.always_microbatch_if_enabled:
+            # TODO we can do something more advanced here to try to balance,
+            #  i.e. split to the left of `total_num_scheduled_tokens // 2` if it
+            #  is more balanced
+            req_split_id = np.argmax(
+                query_start_loc_np > (total_num_scheduled_tokens // 2))
+            return [(slice(0, req_split_id),
+                     slice(0, query_start_loc_np[req_split_id])),
+                    (slice(req_split_id, num_reqs),
+                     slice(query_start_loc_np[req_split_id],
+                           total_num_scheduled_tokens))]
+        return None
+
+    def _is_dummy_ubatch(self, ubatch_slice: UBatchSlices) -> bool:
+        return ubatch_slice[1].start >= ubatch_slice[1].stop
 
     # Note: used for model runner override.
     def _init_device_properties(self) -> None:
@@ -656,6 +704,19 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.query_start_loc_np[0] = 0
         self.query_start_loc_np[1:num_reqs + 1] = cu_num_tokens
 
+        ubatch_slices: Optional[UBatchSlices] = self._ubatch_split(
+            self.query_start_loc_np, max_num_scheduled_tokens,
+            scheduler_output)
+        logger.debug(f"_prepare_inputs {ubatch_slices=}")
+        if ubatch_slices is not None:
+            for ubatch_slice in ubatch_slices:
+                token_slice = ubatch_slice[1]
+                num_tokens = token_slice.stop - token_slice.start
+                if num_tokens == 0:
+                    ubatch_slices = None
+                    logger.debug(f"_prepare_inputs set ubatch_slices = None")
+                    break
+
         self.seq_lens_np[:num_reqs] = (
             self.input_batch.num_computed_tokens_cpu[:num_reqs] +
             num_scheduled_tokens)
@@ -697,7 +758,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             max_query_len=max_num_scheduled_tokens,
         )
 
-        attn_metadata: dict[str, Any] = {}
+        attn_metadata: PerLayerAttnMetadata = {}
+        if ubatch_slices is not None:
+            # store non-ubatch attn_metadata into last index for debug
+            attn_metadata = [dict() for _ in range(len(ubatch_slices) + 1)]
+
         # Prepare the attention metadata for each KV cache group and make layers
         # in the same group share the same metadata.
         for kv_cache_group_id, kv_cache_group_spec in enumerate(
@@ -715,13 +780,46 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     builder,
                 )
 
-            attn_metadata_i = (builder.build(
-                common_prefix_len=common_prefix_len,
-                common_attn_metadata=common_attn_metadata,
-            ))
-
-            for layer_name in kv_cache_group_spec.layer_names:
-                attn_metadata[layer_name] = attn_metadata_i
+            if ubatch_slices is not None:
+                for ubid, (req_slice, token_slice) in enumerate(ubatch_slices):
+                    # Run a dummy batch if its a empty ubatch
+                    if token_slice.stop <= token_slice.start:
+                        attn_metadata_i = None
+                    else:
+                        attn_metadata_i = (
+                            self.attn_metadata_builders[kv_cache_group_id].
+                            build_slice(
+                                req_slice=req_slice,
+                                token_slice=token_slice,
+                                max_query_len=max(tokens[req_slice]),
+                                common_prefix_len=common_prefix_len,
+                                common_attn_metadata=common_attn_metadata,
+                            ))
+                    for layer_name in kv_cache_group_spec.layer_names:
+                        assert type(attn_metadata) is list
+                        attn_metadata[ubid][layer_name] = attn_metadata_i
+                    # store non-ubatch attn_metadata into last index for debug
+                    attn_metadata_i = (
+                        self.attn_metadata_builders[kv_cache_group_id].build(
+                            num_reqs=num_reqs,
+                            num_actual_tokens=total_num_scheduled_tokens,
+                            max_query_len=max_num_scheduled_tokens,
+                            common_prefix_len=common_prefix_len,
+                            common_attn_metadata=common_attn_metadata))
+                    for layer_name in kv_cache_group_spec.layer_names:
+                        # assert type(attn_metadata) is dict
+                        attn_metadata[-1][layer_name] = attn_metadata_i
+            else:
+                attn_metadata_i = (
+                    self.attn_metadata_builders[kv_cache_group_id].build(
+                        num_reqs=num_reqs,
+                        num_actual_tokens=total_num_scheduled_tokens,
+                        max_query_len=max_num_scheduled_tokens,
+                        common_prefix_len=common_prefix_len,
+                        common_attn_metadata=common_attn_metadata))
+                for layer_name in kv_cache_group_spec.layer_names:
+                    assert type(attn_metadata) is dict
+                    attn_metadata[layer_name] = attn_metadata_i
 
         attention_cuda_graphs = all(
             b.can_run_in_cudagraph(common_attn_metadata)
@@ -756,7 +854,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.set_active_loras(self.input_batch, num_scheduled_tokens)
 
         return (attn_metadata, attention_cuda_graphs, logits_indices,
-                spec_decode_metadata, num_scheduled_tokens)
+                spec_decode_metadata, num_scheduled_tokens, ubatch_slices)
 
     def _compute_cascade_attn_prefix_len(
         self,
@@ -1265,8 +1363,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # Prepare the decoder inputs.
         (attn_metadata, attention_cuda_graphs, logits_indices,
-         spec_decode_metadata,
-         num_scheduled_tokens_np) = (self._prepare_inputs(scheduler_output))
+         spec_decode_metadata, num_scheduled_tokens_np,
+         ubatch_slices) = (self._prepare_inputs(scheduler_output))
+        ub_metadata = UBMetadata(ubatch_slices)
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         if (self.use_cuda_graph
                 and num_scheduled_tokens <= self.cudagraph_batch_sizes[-1]):
@@ -1344,6 +1443,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 num_tokens=num_input_tokens,
                 num_tokens_across_dp=num_tokens_across_dp,
                 skip_cuda_graphs=skip_cuda_graphs,
+                ub_metadata=ub_metadata,
         ):
             self.maybe_setup_kv_connector(scheduler_output)
 
@@ -1909,6 +2009,28 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 for layer_name in kv_cache_group_spec.layer_names:
                     attn_metadata[layer_name] = attn_metadata_i
 
+        if do_profile:
+            ubatch_slices = None
+        elif do_capture:
+            # TODO: needs check
+            ubatch_slices = [
+                (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
+                (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
+            ]
+        elif num_tokens == 1:
+            # dummy run
+            ubatch_slices = None
+            # TODO: rm it just for debug
+            # num_tokens = 2
+            # ubatch_slices = [
+            #     (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
+            #     (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
+            # ]
+        else:
+            ubatch_slices = None
+
+        logger.debug(f"_dummy_run {ubatch_slices=}")
+
         with self.maybe_dummy_run_with_lora(self.lora_config,
                                             num_scheduled_tokens):
             model = self.model
@@ -1936,11 +2058,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 intermediate_tensors = self.sync_and_slice_intermediate_tensors(
                     num_tokens, None, False)
 
+            ub_metadata = UBMetadata(ubatch_slices)
             with self.maybe_randomize_inputs(input_ids), set_forward_context(
                     attn_metadata,
                     self.vllm_config,
                     num_tokens=num_tokens,
-                    num_tokens_across_dp=num_tokens_across_dp):
+                    num_tokens_across_dp=num_tokens_across_dp,
+                    ub_metadata=ub_metadata,
+            ):
                 outputs = model(
                     input_ids=input_ids,
                     positions=positions,
@@ -2504,3 +2629,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     dtype=self.kv_cache_dtype,
                     block_size=max_model_len)
         return kv_cache_spec
+
+    def make_dp_metadata():
+        pass

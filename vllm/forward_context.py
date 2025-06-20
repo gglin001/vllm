@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, TypeAlias
 
 import torch
 import torch.distributed as dist
@@ -16,6 +16,9 @@ from vllm.logger import init_logger
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionMetadata
+
+UbatchSlice: TypeAlias = tuple[slice, slice]
+UBatchSlices: TypeAlias = list[UbatchSlice]
 
 logger = init_logger(__name__)
 
@@ -30,6 +33,7 @@ batchsize_forward_time: defaultdict = defaultdict(list)
 class DPMetadata:
     max_tokens_across_dp_cpu: torch.Tensor
     cu_tokens_across_dp_cpu: torch.Tensor
+    support_ubatch: bool = False
 
     @staticmethod
     def num_tokens_across_dp(num_tokens: int, dp_size: int,
@@ -80,6 +84,22 @@ class DPMetadata:
 
 
 @dataclass
+class UBMetadata:
+    ubatch_slices: Optional[UBatchSlices] = None
+    ubatch_index: int = -1
+
+    @classmethod
+    @contextmanager
+    def set_ubatch_index(cls, ubatch_index: int):
+        forward_context = get_forward_context()
+        assert forward_context.ub_metadata is not None
+        prev_ubatch_index = forward_context.ub_metadata.ubatch_index
+        forward_context.ub_metadata.ubatch_index = ubatch_index
+        yield
+        forward_context.ub_metadata.ubatch_index = prev_ubatch_index
+
+
+@dataclass
 class ForwardContext:
     # copy from vllm_config.compilation_config.static_forward_context
     no_compile_layers: dict[str, Any]
@@ -95,6 +115,8 @@ class ForwardContext:
     # set dynamically for each forward pass
     dp_metadata: Optional[DPMetadata] = None
     skip_cuda_graphs: bool = False
+    # ubatch metadata
+    ub_metadata: Optional[UBMetadata] = None
 
 
 _forward_context: Optional[ForwardContext] = None
@@ -116,6 +138,7 @@ def set_forward_context(
     num_tokens: Optional[int] = None,
     num_tokens_across_dp: Optional[torch.Tensor] = None,
     skip_cuda_graphs: bool = False,
+    ub_metadata: Optional[UBMetadata] = None,
 ):
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
@@ -141,6 +164,7 @@ def set_forward_context(
         attn_metadata=attn_metadata,
         dp_metadata=dp_metadata,
         skip_cuda_graphs=skip_cuda_graphs,
+        ub_metadata=ub_metadata,
     )
 
     try:

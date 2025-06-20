@@ -1812,6 +1812,18 @@ class ParallelConfig:
     """ Use data parallelism instead of tensor parallelism for vision encoder.
     Only support LLama4 for now"""
 
+    enable_microbatching: bool = True
+    """Enable microbatching for the model executor."""
+
+    always_microbatch_if_enabled: bool = True
+    """Always microbatch if microbatching is enabled. Easier to sync bewteen
+       dp workers."""
+
+    microbatching_token_threshold: int = 4
+    """The threshold for microbatching. If the number of tokens in the
+    request is greater than this threshold, microbatching will be used.
+    Otherwise, the request will be processed in a single batch."""
+
     @property
     def world_size_across_dp(self) -> int:
         """world_size_across_dp is TPxPPxDP, it is the size of the world

@@ -23,6 +23,11 @@ from vllm.platforms import _Backend, current_platform
 from vllm.utils import direct_register_custom_op
 from vllm.v1.attention.backends.utils import validate_kv_sharing_target
 
+# fmt: off
+from vllm.logger import init_logger
+logger = init_logger(__name__)
+# fmt: on
+
 
 class Attention(nn.Module):
     """Attention layer.
@@ -442,6 +447,12 @@ def unified_attention_with_output(
     attn_metadata = forward_context.attn_metadata
     if isinstance(attn_metadata, dict):
         attn_metadata = attn_metadata[layer_name]
+    elif isinstance(attn_metadata, list):
+        logger.debug(
+            f"unified_attention_with_output - ubatch_index={forward_context.ub_metadata.ubatch_index}"
+        )
+        attn_metadata = attn_metadata[
+            forward_context.ub_metadata.ubatch_index][layer_name]
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
     self.impl.forward(self,
