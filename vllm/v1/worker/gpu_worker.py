@@ -219,6 +219,8 @@ class Worker(WorkerBase):
         torch.cuda.reset_peak_memory_stats()
         GiB = lambda b: b / GiB_bytes
 
+        return int(self.requested_memory * 0.2)
+
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
         with memory_profiling(

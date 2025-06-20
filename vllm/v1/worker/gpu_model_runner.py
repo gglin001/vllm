@@ -81,6 +81,10 @@ else:
         "xgr_torch_compile", globals(),
         "xgrammar.kernels.apply_token_bitmask_inplace_torch_compile")
 
+# fmt: off
+import traceback
+# fmt: on
+
 logger = init_logger(__name__)
 
 AttnMetadataDict: TypeAlias = dict[str, Any]
@@ -2000,16 +2004,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ]
         elif num_tokens == 1:
             # dummy run
-            ubatch_slices = None
+            # ubatch_slices = None
             # TODO: rm it just for debug
-            # num_tokens = 2
-            # ubatch_slices = [
-            #     (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
-            #     (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
-            # ]
+            num_tokens = 2
+            ubatch_slices = [
+                (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
+                (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
+            ]
         else:
             ubatch_slices = None
         logger.debug(f"_dummy_run {ubatch_slices=}")
+        # logger.error(f'traceback: \n\n{"".join(traceback.format_stack())}\n\n')
 
         with self.maybe_dummy_run_with_lora(self.lora_config,
                                             num_scheduled_tokens):
