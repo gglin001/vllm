@@ -795,34 +795,21 @@ class DeepseekV2Model(nn.Module):
         # ubatch must working with dp>1
         use_ubatch = use_ubatch and self.use_dp
 
-        # TODO: check in model_runner not here
-        if use_ubatch:
-            for ubatch_slice in forward_context.ub_metadata.ubatch_slices:
-                token_slice = ubatch_slice[1]
-                num_tokens = token_slice.stop - token_slice.start
-                if num_tokens == 0:
-                    use_ubatch = False
-                    raise Exception("shoule not be here")
-        # TODO: check in model_runner not here
-        if use_ubatch and self.use_dp:
-            if not forward_context.dp_metadata.support_ubatch:
-                use_ubatch = False
-                raise Exception("shoule not be here")
-
         if use_ubatch:
             assert forward_context.ub_metadata is not None
-
             logger.debug(f"ubatch start")
-            print(f"{forward_context.ub_metadata.ubatch_slices=}")
+            logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
 
             # TODO(allen): rm , here just for debug
-            """
+            # """
+            logger.debug(f"set forward_context.ub_metadata.ubatch_index = -1")
+            forward_context.ub_metadata.ubatch_index = -1
             for layer in self.layers[self.start_layer:self.end_layer]:
                 hidden_states, residual = layer(positions, hidden_states,
                                                 residual)
-            """
-            #
             # """
+            #
+            """
             num_no_ubatch_layers = self.config.first_k_dense_replace
             for i in range(num_no_ubatch_layers):
                 layer = self.layers[i]
@@ -830,8 +817,8 @@ class DeepseekV2Model(nn.Module):
                                                 residual)
             hidden_states, residual = self.forward_ubatch(
                 positions, hidden_states, residual, num_no_ubatch_layers)
+            """
             logger.debug(f"ubatch fin")
-            # """
         else:
             for layer in self.layers[self.start_layer:self.end_layer]:
                 hidden_states, residual = layer(positions, hidden_states,

@@ -313,8 +313,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # from the KV cache of `shared_kv_cache_layers[layer_name]`.
         self.shared_kv_cache_layers: dict[str, str] = {}
 
-        self.use_ubatch = parallel_config.enable_microbatching
-
     def _may_reorder_batch(self, scheduler_output: "SchedulerOutput") -> bool:
         """
         Update the order of requests in the batch based on the attention
@@ -708,14 +706,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.query_start_loc_np, max_num_scheduled_tokens,
             scheduler_output)
         logger.debug(f"_prepare_inputs {ubatch_slices=}")
-        if ubatch_slices is not None:
-            for ubatch_slice in ubatch_slices:
-                token_slice = ubatch_slice[1]
-                num_tokens = token_slice.stop - token_slice.start
-                if num_tokens == 0:
-                    ubatch_slices = None
-                    logger.debug(f"_prepare_inputs set ubatch_slices = None")
-                    break
+        if self._is_dummy_ubatch(ubatch_slices):
+            ubatch_slices = None
+            logger.debug(f"_prepare_inputs set ubatch_slices = None")
 
         self.seq_lens_np[:num_reqs] = (
             self.input_batch.num_computed_tokens_cpu[:num_reqs] +
@@ -786,39 +779,25 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     if token_slice.stop <= token_slice.start:
                         attn_metadata_i = None
                     else:
-                        attn_metadata_i = (
-                            self.attn_metadata_builders[kv_cache_group_id].
-                            build_slice(
-                                req_slice=req_slice,
-                                token_slice=token_slice,
-                                max_query_len=max(tokens[req_slice]),
-                                common_prefix_len=common_prefix_len,
-                                common_attn_metadata=common_attn_metadata,
-                            ))
-                    for layer_name in kv_cache_group_spec.layer_names:
-                        assert type(attn_metadata) is list
-                        attn_metadata[ubid][layer_name] = attn_metadata_i
-                    # store non-ubatch attn_metadata into last index for debug
-                    attn_metadata_i = (
-                        self.attn_metadata_builders[kv_cache_group_id].build(
-                            num_reqs=num_reqs,
-                            num_actual_tokens=total_num_scheduled_tokens,
-                            max_query_len=max_num_scheduled_tokens,
+                        attn_metadata_i = (builder.build_slice(
+                            req_slice=req_slice,
+                            token_slice=token_slice,
                             common_prefix_len=common_prefix_len,
-                            common_attn_metadata=common_attn_metadata))
+                            common_attn_metadata=common_attn_metadata,
+                        ))
                     for layer_name in kv_cache_group_spec.layer_names:
-                        # assert type(attn_metadata) is dict
-                        attn_metadata[-1][layer_name] = attn_metadata_i
-            else:
-                attn_metadata_i = (
-                    self.attn_metadata_builders[kv_cache_group_id].build(
-                        num_reqs=num_reqs,
-                        num_actual_tokens=total_num_scheduled_tokens,
-                        max_query_len=max_num_scheduled_tokens,
-                        common_prefix_len=common_prefix_len,
-                        common_attn_metadata=common_attn_metadata))
+                        attn_metadata[ubid][layer_name] = attn_metadata_i
+                # store non-ubatch attn_metadata into last index for debug
+                attn_metadata_i = (builder.build(
+                    common_prefix_len=common_prefix_len,
+                    common_attn_metadata=common_attn_metadata))
                 for layer_name in kv_cache_group_spec.layer_names:
-                    assert type(attn_metadata) is dict
+                    attn_metadata[-1][layer_name] = attn_metadata_i
+            else:
+                attn_metadata_i = (builder.build(
+                    common_prefix_len=common_prefix_len,
+                    common_attn_metadata=common_attn_metadata))
+                for layer_name in kv_cache_group_spec.layer_names:
                     attn_metadata[layer_name] = attn_metadata_i
 
         attention_cuda_graphs = all(
@@ -1365,7 +1344,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         (attn_metadata, attention_cuda_graphs, logits_indices,
          spec_decode_metadata, num_scheduled_tokens_np,
          ubatch_slices) = (self._prepare_inputs(scheduler_output))
-        ub_metadata = UBMetadata(ubatch_slices)
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         if (self.use_cuda_graph
                 and num_scheduled_tokens <= self.cudagraph_batch_sizes[-1]):
@@ -1434,6 +1412,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # If attention doesn't support CUDA Graphs for this batch, but we
         # compiled with full CUDA graphs, we have to skip them entirely.
         skip_cuda_graphs = self.full_cuda_graph and not attention_cuda_graphs
+
+        ub_metadata = UBMetadata(ubatch_slices)
 
         # Run the model.
         # Use persistent buffers for CUDA graphs.
@@ -2009,9 +1989,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 for layer_name in kv_cache_group_spec.layer_names:
                     attn_metadata[layer_name] = attn_metadata_i
 
-        if do_profile:
-            ubatch_slices = None
-        elif do_capture:
+        elif num_tokens > 1:
+            # profile or capture
             # TODO: needs check
             ubatch_slices = [
                 (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
@@ -2028,7 +2007,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # ]
         else:
             ubatch_slices = None
-
         logger.debug(f"_dummy_run {ubatch_slices=}")
 
         with self.maybe_dummy_run_with_lora(self.lora_config,

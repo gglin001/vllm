@@ -487,16 +487,32 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
             return (num_decodes, num_prefills, num_decode_tokens,
                     num_prefill_tokens)
 
+    def build(self, common_prefix_len: int,
+              common_attn_metadata: CommonAttentionMetadata) -> M:
+        return self.build_slice(
+            req_slice=slice(0, common_attn_metadata.num_reqs),
+            token_slice=slice(0, common_attn_metadata.num_actual_tokens),
+            common_prefix_len=common_prefix_len,
+            common_attn_metadata=common_attn_metadata,
+        )
+
     def build_slice(
         self,
         req_slice: slice,
         token_slice: slice,
-        max_query_len: int,
         common_prefix_len: int,
         common_attn_metadata: CommonAttentionMetadata,
     ) -> M:
+        """
+        num_reqs = common_attn_metadata.num_reqs
+        num_actual_tokens = common_attn_metadata.num_actual_tokens
+        max_query_len = common_attn_metadata.max_query_len
+
+        assert self._num_decodes + self._num_prefills == num_reqs
+        """
         num_reqs = req_slice.stop - req_slice.start
-        num_tokens = token_slice.stop - token_slice.start
+        num_actual_tokens = token_slice.stop - token_slice.start
+        max_query_len = common_attn_metadata.max_query_len
 
         # Note(simon): be careful about the CPU <> GPU memory movement in this
         # function. We should avoid GPU -> CPU sync as much as possible because
@@ -504,38 +520,28 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
         device = self.runner.device
         block_table = self.block_table
         block_table_tensor = block_table.get_device_tensor()[req_slice]
-        slot_mapping = block_table.slot_mapping_cpu[token_slice].to(
-            device, non_blocking=True).long()
+        block_table.slot_mapping[token_slice].copy_(
+            block_table.slot_mapping_cpu[token_slice], non_blocking=True)
+        # block_table.slot_mapping[token_slice.stop:].fill_(-1)
+        slot_mapping = block_table.slot_mapping[token_slice]
+
         query_start_loc = slice_query_start_locs(
             common_attn_metadata.query_start_loc, req_slice)
         seq_lens = common_attn_metadata.seq_lens[req_slice]
 
         num_computed_tokens = self.runner.input_batch.\
             num_computed_tokens_cpu_tensor[req_slice]
-
         num_decodes, num_prefills, num_decode_tokens, num_prefill_tokens = \
             self._split_decodes_and_prefills(
-                max_query_len, num_reqs, num_tokens, query_start_loc)
-
+                max_query_len, num_reqs, num_actual_tokens, query_start_loc)
         assert num_decodes + num_prefills == num_reqs
-        assert num_decode_tokens + num_prefill_tokens == num_tokens
-        """
-        block_table_tensor = block_table.get_device_tensor()[:num_reqs]
-        block_table.slot_mapping[:num_actual_tokens].copy_(
-            block_table.slot_mapping_cpu[:num_actual_tokens],
-            non_blocking=True)
-        block_table.slot_mapping[num_actual_tokens:].fill_(-1)
-        slot_mapping = block_table.slot_mapping[:num_actual_tokens]
+        assert num_decode_tokens + num_prefill_tokens == num_actual_tokens
 
-        query_start_loc = common_attn_metadata.query_start_loc
-        seq_lens = common_attn_metadata.seq_lens
-        """
         prefill_metadata = None
         if num_prefills > 0:
             reqs_start = num_decodes  # prefill_start
 
-            context_lens_cpu = self.runner.input_batch.\
-                num_computed_tokens_cpu_tensor[reqs_start:num_reqs]
+            context_lens_cpu = num_computed_tokens[reqs_start:num_reqs]
             max_context_len_cpu = context_lens_cpu.max().item()
             num_prefills_with_context_cpu = (context_lens_cpu > 0).sum().item()
             prefill_query_start_loc = query_start_loc[
@@ -615,7 +621,7 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
             )
 
         return self.metadata_cls(
-            num_actual_tokens=num_tokens,
+            num_actual_tokens=num_actual_tokens,
             query_start_loc=query_start_loc,
             slot_mapping=slot_mapping,
             head_dim=self.runner.model_config.get_head_size(),
@@ -625,17 +631,6 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
             num_prefills=num_prefills,
             prefill=prefill_metadata,
             decode=decode_metadata,
-        )
-
-    def build(self, num_reqs: int, num_actual_tokens: int, max_query_len: int,
-              common_prefix_len: int,
-              common_attn_metadata: CommonAttentionMetadata):
-        return self.build_slice(
-            req_slice=slice(0, num_reqs),
-            token_slice=slice(0, num_actual_tokens),
-            max_query_len=max_query_len,
-            common_prefix_len=common_prefix_len,
-            common_attn_metadata=common_attn_metadata,
         )
 
     def can_run_in_cudagraph(
