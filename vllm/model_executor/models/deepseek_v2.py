@@ -798,7 +798,7 @@ class DeepseekV2Model(nn.Module):
         if use_ubatch:
             assert forward_context.ub_metadata is not None
             logger.debug(f"ubatch start")
-            logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
+            # logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
 
             # TODO(allen): rm , here just for debug
             # """

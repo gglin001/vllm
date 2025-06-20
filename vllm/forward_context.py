@@ -33,6 +33,8 @@ batchsize_forward_time: defaultdict = defaultdict(list)
 class DPMetadata:
     max_tokens_across_dp_cpu: torch.Tensor
     cu_tokens_across_dp_cpu: torch.Tensor
+    num_tokens_tensor: torch.Tensor
+    support_cg: bool = False
     support_ubatch: bool = False
 
     @staticmethod
@@ -81,6 +83,36 @@ class DPMetadata:
         max_tokens_across_dp_cpu = torch.max(num_tokens_across_dp)
         cu_tokens_across_dp_cpu = torch.cumsum(num_tokens_across_dp, dim=0)
         return DPMetadata(max_tokens_across_dp_cpu, cu_tokens_across_dp_cpu)
+
+    @staticmethod
+    def make_ubatch(
+        parallel_config: ParallelConfig,
+        attn_metadata: Any,
+        num_tokens: int,
+        num_tokens_across_dp: Optional[torch.Tensor] = None,
+        support_cg: bool = False,
+        support_ubatch: bool = False,
+    ) -> "DPMetadata":
+        assert parallel_config.data_parallel_size > 1
+        dp_size = parallel_config.data_parallel_size
+        dp_rank = parallel_config.data_parallel_rank
+        assert num_tokens_across_dp is None
+        num_tokens_across_dp = [0] * (dp_size + 2)
+        num_tokens_across_dp[dp_rank] = num_tokens
+        num_tokens_across_dp[-2] = int(support_cg)
+        num_tokens_across_dp[-1] = int(support_ubatch)
+        num_tokens_tensor = torch.tensor(num_tokens_across_dp,
+                                         device="cpu",
+                                         dtype=torch.int32)
+        from vllm.distributed.parallel_state import get_dp_group
+        dist.all_reduce(num_tokens_tensor, group=get_dp_group().cpu_group)
+        max_tokens_across_dp_cpu = torch.max(num_tokens_tensor[:-2])
+        cu_tokens_across_dp_cpu = torch.cumsum(num_tokens_tensor[:-2], dim=0)
+        support_cg_all = num_tokens_tensor[-2].sum().item() == dp_size
+        support_ubatch_all = num_tokens_tensor[-1].sum().item() == dp_size
+        return DPMetadata(max_tokens_across_dp_cpu, cu_tokens_across_dp_cpu,
+                          num_tokens_tensor, support_cg_all,
+                          support_ubatch_all)
 
 
 @dataclass
@@ -139,6 +171,7 @@ def set_forward_context(
     num_tokens_across_dp: Optional[torch.Tensor] = None,
     skip_cuda_graphs: bool = False,
     ub_metadata: Optional[UBMetadata] = None,
+    dp_metadata: Optional[DPMetadata] = None,
 ):
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
@@ -148,12 +181,15 @@ def set_forward_context(
     need_to_track_batchsize = track_batchsize and attn_metadata is not None
     if need_to_track_batchsize:
         forward_start_time = time.perf_counter()
+    assert dp_metadata is not None
+    """
     dp_metadata: Optional[DPMetadata] = None
     if vllm_config.parallel_config.data_parallel_size > 1 and (
             attn_metadata is not None or num_tokens is not None):
         dp_metadata = DPMetadata.make(vllm_config.parallel_config,
                                       attn_metadata, num_tokens or 0,
                                       num_tokens_across_dp)
+    """
 
     global _forward_context
     prev_context = _forward_context

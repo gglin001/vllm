@@ -317,6 +317,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # from the KV cache of `shared_kv_cache_layers[layer_name]`.
         self.shared_kv_cache_layers: dict[str, str] = {}
 
+        self.use_dp = self.parallel_config.data_parallel_size > 1
+        self.use_ub = self.parallel_config.enable_microbatching
+
     def _may_reorder_batch(self, scheduler_output: "SchedulerOutput") -> bool:
         """
         Update the order of requests in the batch based on the attention
@@ -1369,9 +1372,24 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             else:
                 num_input_tokens = num_scheduled_tokens
 
-        # Padding for DP
-        num_pad, num_tokens_across_dp = self.get_dp_padding(num_input_tokens)
-        num_input_tokens += num_pad
+        # # Padding for DP
+        # num_pad, num_tokens_across_dp = self.get_dp_padding(num_input_tokens)
+        # num_input_tokens += num_pad
+
+        support_ubatch = ubatch_slices is not None
+        if self.use_dp:
+            dp_metadata = DPMetadata.make_ubatch(
+                self.parallel_config,
+                attn_metadata,
+                num_tokens=num_input_tokens,
+                support_cg=False,
+                support_ubatch=support_ubatch,
+            )
+            if not dp_metadata.support_ubatch:
+                ubatch_slices = None
+        else:
+            dp_metadata = None
+        ub_metadata = UBMetadata(ubatch_slices)
 
         # _prepare_inputs may reorder the batch, so we must gather multi
         # modal outputs after that to ensure the correct order
@@ -1419,17 +1437,16 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # compiled with full CUDA graphs, we have to skip them entirely.
         skip_cuda_graphs = self.full_cuda_graph and not attention_cuda_graphs
 
-        ub_metadata = UBMetadata(ubatch_slices)
-
         # Run the model.
         # Use persistent buffers for CUDA graphs.
         with set_forward_context(
                 attn_metadata,
                 self.vllm_config,
                 num_tokens=num_input_tokens,
-                num_tokens_across_dp=num_tokens_across_dp,
+                # num_tokens_across_dp=num_tokens_across_dp,
                 skip_cuda_graphs=skip_cuda_graphs,
                 ub_metadata=ub_metadata,
+                dp_metadata=dp_metadata,
         ):
             self.maybe_setup_kv_connector(scheduler_output)
 
@@ -1692,7 +1709,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     def kv_connector_no_forward(
             self, scheduler_output: "SchedulerOutput") -> ModelRunnerOutput:
         # KV send/recv even if no work to do.
-        with set_forward_context(None, self.vllm_config):
+        with set_forward_context(None, self.vllm_config, dp_metadata=DPMetadata(None, None, None)):
             self.maybe_setup_kv_connector(scheduler_output)
             finished_sending, finished_recving = (
                 self.get_finished_kv_transfers(scheduler_output))
@@ -1948,9 +1965,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         capture_attn_cudagraph: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
-        # Padding for DP
-        num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
-        num_tokens += num_pad
+        # # Padding for DP
+        # num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
+        # num_tokens += num_pad
 
         # Set num_scheduled_tokens based on num_tokens and max_num_seqs
         # for dummy run with LoRA so that the num_reqs collectively
@@ -1995,26 +2012,45 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 for layer_name in kv_cache_group_spec.layer_names:
                     attn_metadata[layer_name] = attn_metadata_i
 
-        elif num_tokens > 1:
-            # profile or capture
-            # TODO: needs check
+        if num_tokens == 1 and self.use_dp and self.use_ub:
+            num_tokens_dp = 2
+            support_ubatch = True
+        else:
+            num_tokens_dp = num_tokens
+            support_ubatch = True
+        if self.use_dp:
+            dp_metadata = DPMetadata.make_ubatch(
+                self.parallel_config,
+                attn_metadata,
+                num_tokens=num_tokens_dp,
+                support_cg=False,
+                support_ubatch=support_ubatch,
+            )
+            if num_tokens == 1:
+                num_tokens = 1 if not dp_metadata.support_ubatch else 2
+        else:
+            dp_metadata = None
+
+        if num_tokens > 1:
+            # profile or capture or padded==2 for ub
             ubatch_slices = [
                 (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
                 (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
             ]
         elif num_tokens == 1:
-            # dummy run
-            # ubatch_slices = None
+            # dummy run without padding
+            ubatch_slices = None
             # TODO: rm it just for debug
-            num_tokens = 2
-            ubatch_slices = [
-                (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
-                (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
-            ]
+            # num_tokens = 2
+            # ubatch_slices = [
+            #     (slice(*[0, 0]), slice(*[0, num_tokens // 2])),
+            #     (slice(*[0, 0]), slice(*[num_tokens // 2, num_tokens])),
+            # ]
         else:
             ubatch_slices = None
         logger.debug(f"_dummy_run {ubatch_slices=}")
         # logger.error(f'traceback: \n\n{"".join(traceback.format_stack())}\n\n')
+        ub_metadata = UBMetadata(ubatch_slices)
 
         with self.maybe_dummy_run_with_lora(self.lora_config,
                                             num_scheduled_tokens):
@@ -2043,13 +2079,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 intermediate_tensors = self.sync_and_slice_intermediate_tensors(
                     num_tokens, None, False)
 
-            ub_metadata = UBMetadata(ubatch_slices)
             with self.maybe_randomize_inputs(input_ids), set_forward_context(
                     attn_metadata,
                     self.vllm_config,
                     num_tokens=num_tokens,
-                    num_tokens_across_dp=num_tokens_across_dp,
+                    # num_tokens_across_dp=num_tokens_across_dp,
                     ub_metadata=ub_metadata,
+                    dp_metadata=dp_metadata,
             ):
                 outputs = model(
                     input_ids=input_ids,
