@@ -1812,7 +1812,7 @@ class ParallelConfig:
     """ Use data parallelism instead of tensor parallelism for vision encoder.
     Only support LLama4 for now"""
 
-    enable_microbatching: bool = True
+    enable_microbatching: bool = False
     """Enable microbatching for the model executor."""
 
     always_microbatch_if_enabled: bool = True
