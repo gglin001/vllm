@@ -666,7 +666,13 @@ class DeepseekV2DecoderLayer(nn.Module):
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.dispatch,
+            ubatch_stage=UBStage.dispatch_a,
+            ubatch_slice=0,
+        )
+        _ = self.mlp.experts.forward_ubatch(
+            hidden_states_0,
+            router_logits_0,
+            ubatch_stage=UBStage.dispatch_b,
             ubatch_slice=0,
         )
         # 0, fused_experts
@@ -681,7 +687,13 @@ class DeepseekV2DecoderLayer(nn.Module):
         final_hidden_states_0 = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.combine,
+            ubatch_stage=UBStage.combine_a,
+            ubatch_slice=0,
+        )
+        final_hidden_states_0 = self.mlp.experts.forward_ubatch(
+            hidden_states_0,
+            router_logits_0,
+            ubatch_stage=UBStage.combine_b,
             ubatch_slice=0,
         )
         # 0, shared_experts
@@ -729,7 +741,13 @@ class DeepseekV2DecoderLayer(nn.Module):
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.dispatch,
+            ubatch_stage=UBStage.dispatch_a,
+            ubatch_slice=1,
+        )
+        _ = self.mlp.experts.forward_ubatch(
+            hidden_states_1,
+            router_logits_1,
+            ubatch_stage=UBStage.dispatch_b,
             ubatch_slice=1,
         )
         # 1, fused_experts
@@ -744,7 +762,13 @@ class DeepseekV2DecoderLayer(nn.Module):
         final_hidden_states_1 = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.combine,
+            ubatch_stage=UBStage.combine_a,
+            ubatch_slice=1,
+        )
+        final_hidden_states_1 = self.mlp.experts.forward_ubatch(
+            hidden_states_1,
+            router_logits_1,
+            ubatch_stage=UBStage.combine_b,
             ubatch_slice=1,
         )
         # 1, shared_experts

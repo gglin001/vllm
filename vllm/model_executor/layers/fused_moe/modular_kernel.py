@@ -543,7 +543,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             global_num_experts = local_num_experts
 
         # prepare
-        if ubatch_stage is UBStage.dispatch:
+        if ubatch_stage is UBStage.dispatch_a:
             # TODO: support async
             _ = self.prepare_finalize.prepare_a(
                 a1,
@@ -557,6 +557,9 @@ class FusedMoEModularKernel(torch.nn.Module):
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
             )
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            return ubatch_ctx
+        elif ubatch_stage is UBStage.dispatch_b:
             (a1q, a1q_scale, expert_num_tokens, _expert_topk_ids,
              _expert_topk_weights) = self.prepare_finalize.prepare_b(
                  a1,
@@ -713,7 +716,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             ubatch_ctx.fused_out = fused_out
             return ubatch_ctx
         # finalize
-        elif ubatch_stage is UBStage.combine:
+        elif ubatch_stage is UBStage.combine_a:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             fused_out = ubatch_ctx.fused_out
             topk_ids = ubatch_ctx.topk_ids
@@ -731,6 +734,17 @@ class FusedMoEModularKernel(torch.nn.Module):
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
             )
+            return ubatch_ctx
+        # finalize
+        elif ubatch_stage is UBStage.combine_b:
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            fused_out = ubatch_ctx.fused_out
+            topk_ids = ubatch_ctx.topk_ids
+            topk_weights = ubatch_ctx.topk_weights
+
+            a1 = hidden_states
+            output = a1 if inplace else torch.zeros_like(a1)
+
             _ = self.prepare_finalize.finalize_b(
                 output,
                 fused_out,
@@ -740,7 +754,6 @@ class FusedMoEModularKernel(torch.nn.Module):
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
             )
-
             return output
         else:
             raise Exception(f"get {ubatch_stage=}")

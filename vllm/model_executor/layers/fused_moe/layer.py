@@ -963,7 +963,7 @@ class FusedMoE(torch.nn.Module):
                 dtype=act_dtype,
                 device=torch.cuda.current_device())
 
-        self.ubatch_ctxs = [UBContext()] * (2+1)
+        self.ubatch_ctxs = [UBContext()] * (2 + 1)
 
     @property
     def tp_size(self):
@@ -1520,7 +1520,8 @@ class FusedMoE(torch.nn.Module):
         kwargs = self.forward_kwargs()
 
         # prepare
-        if ubatch_stage is UBStage.dispatch:
+        if ubatch_stage is UBStage.dispatch_a:
+            # TODO: mv out
             topk_weights, topk_ids = FusedMoE.select_experts(
                 hidden_states=hidden_states,
                 router_logits=router_logits,
@@ -1557,8 +1558,8 @@ class FusedMoE(torch.nn.Module):
             ubatch_ctx.topk_weights = topk_weights
             ubatch_ctx.topk_ids = topk_ids
             return ubatch_ctx
-        # fused_experts
-        elif ubatch_stage is UBStage.mlp:
+        # dispatch_b or fused_experts
+        elif ubatch_stage is UBStage.dispatch_b or ubatch_stage is UBStage.mlp:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids
@@ -1582,7 +1583,7 @@ class FusedMoE(torch.nn.Module):
             )
             return ubatch_ctx
         # finalize
-        elif ubatch_stage is UBStage.combine:
+        elif ubatch_stage is UBStage.combine_a or ubatch_stage is UBStage.combine_b:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids
