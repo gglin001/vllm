@@ -652,9 +652,9 @@ class DeepseekV2DecoderLayer(nn.Module):
         self.mlp: "DeepseekV2MoE"
         self.mlp.experts: "FusedMoE"  # type: ignore
         # 0, no split mlp
-        final_hidden_states_0 = self.mlp(hidden_states_0)
+        # final_hidden_states_0 = self.mlp(hidden_states_0)
         #
-        """
+        # """
         # 0, shared_experts
         if self.mlp.n_shared_experts is not None:
             shared_output_0 = self.mlp.shared_experts(hidden_states_0)
@@ -674,7 +674,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         # 0, shared_experts
         if shared_output_0 is not None:
             final_hidden_states_0 = final_hidden_states_0 + shared_output_0
-        """
+        # """
 
         return final_hidden_states_0, residual_0
 

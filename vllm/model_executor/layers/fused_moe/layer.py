@@ -1474,6 +1474,130 @@ class FusedMoE(torch.nn.Module):
 
         return final_hidden_states
 
+    def forward_kwargs(self):
+        layer = self
+        if self.quant_method.__class__.__name__ == "Fp8MoEMethod":
+            kwargs = {
+                "w1_scale":
+                (layer.w13_weight_scale_inv
+                 if self.quant_method.block_quant else layer.w13_weight_scale),
+                "w2_scale":
+                (layer.w2_weight_scale_inv
+                 if self.quant_method.block_quant else layer.w2_weight_scale),
+                "a1_scale":
+                layer.w13_input_scale,
+                "a2_scale":
+                layer.w2_input_scale,
+            }
+        elif self.quant_method.__class__.__name__ == "UnquantizedFusedMoEMethod":
+            kwargs = {}
+        else:
+            raise Exception("unsupported")
+
+        return kwargs
+
+    def forward_prepare(self, hidden_states: torch.Tensor,
+                        router_logits: torch.Tensor, ubatch_slice: int):
+        assert self.quant_method is not None
+        # TODO: support `deepep_low_latency` and `pplx` by chunks
+        # assert self.moe_parallel_config.use_deepep_ht_kernels
+        # TODO: rm hardcode
+        # assert self.quant_method.__class__.__name__ == "Fp8MoEMethod"
+        # assert not self.quant_method.use_marlin
+
+        self.quant_method: "FusedMoEMethodBase"
+        self.quant_method.fused_experts: "FusedMoEModularKernel"  # type: ignore
+
+        topk_weights, topk_ids = FusedMoE.select_experts(
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+            use_grouped_topk=self.use_grouped_topk,
+            top_k=self.top_k,
+            renormalize=self.renormalize,
+            topk_group=self.topk_group,
+            num_expert_group=self.num_expert_group,
+            custom_routing_function=self.custom_routing_function,
+            scoring_func=self.scoring_func,
+            e_score_correction_bias=self.e_score_correction_bias,
+            indices_type=self.quant_method.topk_indices_dtype,
+        )
+
+        layer = self
+        kwargs = self.forward_kwargs()
+        return self.quant_method.fused_experts.forward_ubatch(
+            hidden_states=hidden_states,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            inplace=True,
+            activation=self.activation,
+            apply_router_weight_on_input=self.apply_router_weight_on_input,
+            global_num_experts=self.global_num_experts,
+            expert_map=self.expert_map,
+            #
+            ubatch_stage=0,
+            ubatch_slice=ubatch_slice,
+            #
+            **kwargs,
+            #
+        )
+
+    def forward_fused_experts(self, hidden_states: torch.Tensor,
+                              router_logits: torch.Tensor, ubatch_slice: int):
+        layer = self
+        kwargs = self.forward_kwargs()
+        return self.quant_method.fused_experts.forward_ubatch(
+            hidden_states=hidden_states,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            #
+            # topk_weights=topk_weights,
+            # topk_ids=topk_ids,
+            topk_weights=None,
+            topk_ids=None,
+            #
+            inplace=True,
+            activation=self.activation,
+            apply_router_weight_on_input=self.apply_router_weight_on_input,
+            global_num_experts=self.global_num_experts,
+            expert_map=self.expert_map,
+            #
+            ubatch_stage=1,
+            ubatch_slice=ubatch_slice,
+            #
+            **kwargs,
+            #
+        )
+
+    def forward_finalize(self, hidden_states: torch.Tensor,
+                         router_logits: torch.Tensor, ubatch_slice: int):
+        layer = self
+        kwargs = self.forward_kwargs()
+        ubatch_ctx = self.quant_method.fused_experts.forward_ubatch(
+            hidden_states=hidden_states,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            #
+            # topk_weights=topk_weights,
+            # topk_ids=topk_ids,
+            topk_weights=None,
+            topk_ids=None,
+            #
+            inplace=True,
+            activation=self.activation,
+            apply_router_weight_on_input=self.apply_router_weight_on_input,
+            global_num_experts=self.global_num_experts,
+            expert_map=self.expert_map,
+            #
+            ubatch_stage=2,
+            ubatch_slice=ubatch_slice,
+            #
+            **kwargs,
+            #
+        )
+        return ubatch_ctx.output
+
     @classmethod
     def make_expert_params_mapping(
             cls, ckpt_gate_proj_name: str, ckpt_down_proj_name: str,

@@ -293,6 +293,14 @@ def _chunk_scales(scales: Optional[torch.Tensor], start: int,
     return None
 
 
+# fmt:off
+from dataclasses import dataclass  # noqa: E402
+@dataclass
+class UBContext:
+    pass
+# fmt:on
+
+
 class FusedMoEModularKernel(torch.nn.Module):
     """
     This class combines a FusedMoEPrepareAndFinalize instance and
@@ -314,6 +322,8 @@ class FusedMoEModularKernel(torch.nn.Module):
         super().__init__()
         self.prepare_finalize = prepare_finalize
         self.fused_experts = fused_experts
+
+        self.ubatch_ctxs = [UBContext()] * 2
 
     def forward(
         self,
@@ -507,3 +517,199 @@ class FusedMoEModularKernel(torch.nn.Module):
                                        topk_ids, apply_router_weight_on_input)
 
         return output
+
+    def forward_ubatch(
+        self,
+        hidden_states: torch.Tensor,
+        w1: torch.Tensor,
+        w2: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        inplace: bool = False,
+        activation: str = "silu",
+        global_num_experts: int = -1,
+        expert_map: Optional[torch.Tensor] = None,
+        w1_scale: Optional[torch.Tensor] = None,
+        w2_scale: Optional[torch.Tensor] = None,
+        w1_zp: Optional[torch.Tensor] = None,
+        w2_zp: Optional[torch.Tensor] = None,
+        a1_scale: Optional[torch.Tensor] = None,
+        a2_scale: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
+        #
+        ubatch_stage: int = -1,
+        ubatch_slice: int = -1,
+        #
+    ) -> torch.Tensor:
+
+        a1 = hidden_states
+        # output = a1 if inplace else torch.zeros_like(a1)
+
+        local_num_experts = w1.size(0)
+        if global_num_experts == -1:
+            global_num_experts = local_num_experts
+
+        # prepare
+        if ubatch_stage == 0:
+            # TODO: support async
+            (a1q, a1q_scale, expert_num_tokens, _expert_topk_ids,
+             _expert_topk_weights) = self.prepare_finalize.prepare(
+                 a1, a1_scale, a2_scale, topk_weights, topk_ids,
+                 global_num_experts, expert_map, apply_router_weight_on_input)
+
+            # Maybe prepare gathered topk_ids and topk_weights from other EP ranks.
+            topk_ids = topk_ids if _expert_topk_ids is None else _expert_topk_ids
+            topk_weights = (topk_weights if _expert_topk_weights is None else
+                            _expert_topk_weights)
+
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            ubatch_ctx.a1q = a1q
+            ubatch_ctx.a1q_scale = a1q_scale
+            ubatch_ctx.expert_num_tokens = expert_num_tokens
+            ubatch_ctx.topk_ids = topk_ids
+            ubatch_ctx.topk_weights = topk_weights
+            return ubatch_ctx
+        # fused_experts
+        elif ubatch_stage == 1:
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            a1q = ubatch_ctx.a1q
+            a1q_scale = ubatch_ctx.a1q_scale
+            expert_num_tokens = ubatch_ctx.expert_num_tokens
+            topk_ids = ubatch_ctx.topk_ids
+            topk_weights = ubatch_ctx.topk_weights
+
+            fused_out = None
+
+            if a1q.numel() == 0:
+                # This happens when none of the tokens from the all2all reach this
+                # EP rank. Also, note that this is only relevant for CUDAGraph
+                # incompatible all2all kernels like the DeepEP high-throughput
+                # kernels. CUDAGraph compatible all2all kernels like the pplx
+                # kernels and the DeepEP low-latency kernels are always batched
+                # and can never run into the tensor.numel() == 0 case.
+                fused_out = torch.empty_like(a1q).to(dtype=a1.dtype)
+            else:
+                _, M, N, K, top_k = _moe_problem_size(a1q, w1, w2, topk_ids)
+
+                if self.fused_experts.supports_chunking():
+                    CHUNK_SIZE = envs.VLLM_FUSED_MOE_CHUNK_SIZE
+                    num_chunks = cdiv(M, CHUNK_SIZE)
+                else:
+                    CHUNK_SIZE = M
+                    num_chunks = 1
+
+                if num_chunks == 1:
+                    (workspace13_shape, workspace2_shape, fused_out_shape,
+                     workspace_dtype) = self.fused_experts.workspace_shapes(
+                         a1, a1q, M, N, K, top_k, global_num_experts,
+                         local_num_experts)
+                else:
+                    # Use the full M to get the final output shape.
+                    _, _, fused_out_shape, _ = (
+                        self.fused_experts.workspace_shapes(
+                            a1, a1q, M, N, K, top_k, global_num_experts,
+                            local_num_experts))
+                    # Use the CHUNK_SIZE to get the workspace shapes.
+                    workspace13_shape, workspace2_shape, _, workspace_dtype = (
+                        self.fused_experts.workspace_shapes(
+                            a1, a1q, CHUNK_SIZE, N, K, top_k,
+                            global_num_experts, local_num_experts))
+
+                # We can reuse the memory between cache1 and cache3 because by the
+                # time we need cache3, we're done with cache1.
+                workspace13 = torch.empty(prod(workspace13_shape),
+                                          device=a1.device,
+                                          dtype=workspace_dtype)
+                workspace2 = torch.empty(prod(workspace2_shape),
+                                         device=a1.device,
+                                         dtype=workspace_dtype)
+
+                if num_chunks == 1:
+                    fused_out = _resize_cache(workspace13, fused_out_shape)
+
+                    self.fused_experts.apply(
+                        fused_out,
+                        a1q,
+                        w1,
+                        w2,
+                        topk_ids,
+                        activation=activation,
+                        global_num_experts=global_num_experts,
+                        expert_map=expert_map,
+                        w1_scale=w1_scale,
+                        w2_scale=w2_scale,
+                        w1_zp=w1_zp,
+                        w2_zp=w2_zp,
+                        a1q_scale=a1q_scale,
+                        a2_scale=a2_scale,
+                        workspace13=workspace13,
+                        workspace2=workspace2,
+                        expert_num_tokens=expert_num_tokens,
+                    )
+                else:
+                    # The leading output dimension may not be equal to M, so
+                    # we compute output indices separately.
+                    M_out = fused_out_shape[0]
+                    assert M_out >= M
+                    factor = M_out // M
+                    assert factor > 0
+                    OUT_CHUNK_SIZE = CHUNK_SIZE * factor
+
+                    fused_out = torch.empty(fused_out_shape,
+                                            device=a1q.device,
+                                            dtype=workspace_dtype)
+
+                    assert cdiv(M_out, OUT_CHUNK_SIZE) == num_chunks, (
+                        f"{cdiv(M_out, OUT_CHUNK_SIZE)} == {num_chunks}")
+
+                    for chunk in range(num_chunks):
+                        begin_chunk_idx = chunk * CHUNK_SIZE
+                        end_chunk_idx = min((chunk + 1) * CHUNK_SIZE, M)
+                        begin_out_idx = chunk * OUT_CHUNK_SIZE
+                        end_out_idx = min((chunk + 1) * OUT_CHUNK_SIZE, M_out)
+                        curr_a1q = a1q[begin_chunk_idx:end_chunk_idx]
+                        curr_a1q_scale = _chunk_scales(a1q_scale,
+                                                       begin_chunk_idx,
+                                                       end_chunk_idx)
+                        curr_a2_scale = _chunk_scales(a2_scale,
+                                                      begin_chunk_idx,
+                                                      end_chunk_idx)
+                        curr_topk_ids = topk_ids[begin_chunk_idx:end_chunk_idx]
+
+                        self.fused_experts.apply(
+                            fused_out[begin_out_idx:end_out_idx],
+                            curr_a1q,
+                            w1,
+                            w2,
+                            curr_topk_ids,
+                            activation=activation,
+                            global_num_experts=global_num_experts,
+                            expert_map=expert_map,
+                            w1_scale=w1_scale,
+                            w2_scale=w2_scale,
+                            w1_zp=w1_zp,
+                            w2_zp=w2_zp,
+                            a1q_scale=curr_a1q_scale,
+                            a2_scale=curr_a2_scale,
+                            workspace13=workspace13,
+                            workspace2=workspace2,
+                            expert_num_tokens=expert_num_tokens,
+                        )
+
+            ubatch_ctx.fused_out = fused_out
+            return ubatch_ctx
+        # finalize
+        elif ubatch_stage == 2:
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            fused_out = ubatch_ctx.fused_out
+            topk_ids = ubatch_ctx.topk_ids
+            topk_weights = ubatch_ctx.topk_weights
+
+            a1 = hidden_states
+            output = a1 if inplace else torch.zeros_like(a1)
+
+            self.prepare_finalize.finalize(output, fused_out, topk_weights,
+                                           topk_ids,
+                                           apply_router_weight_on_input)
+            ubatch_ctx.output = output
+            return ubatch_ctx

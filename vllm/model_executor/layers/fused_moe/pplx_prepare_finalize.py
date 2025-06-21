@@ -40,7 +40,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
     def topk_indices_dtype(self) -> Optional[torch.dtype]:
         return torch.uint32
 
-    def prepare(
+    def prepare_a(
         self,
         a1: torch.Tensor,
         a1_scale: Optional[torch.Tensor],
@@ -123,13 +123,99 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             dp_x_scale=a1q_scale,
             indices=rank_topk_ids,
             bound_m=bound_m,
+            #
+            do_send=True,
+            do_recv=False,
+            #
+        )
+        return expert_x, expert_x_scale, expert_num_tokens, None, None, a1q, a1q_scale, rank_topk_ids, bound_m
+
+    def prepare_b(
+        self,
+        a1: torch.Tensor,
+        a1_scale: Optional[torch.Tensor],
+        a2_scale: Optional[torch.Tensor],
+        rank_topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        num_experts: int,
+        expert_map: Optional[torch.Tensor],
+        apply_router_weight_on_input: bool,
+        #
+        expert_num_tokens: torch.Tensor,
+        expert_x: torch.Tensor,
+        expert_x_scale: torch.Tensor,
+        a1q: torch.Tensor,
+        a1q_scale: torch.Tensor,
+        # rank_topk_ids: torch.Tensor,
+        bound_m: torch.Tensor,
+        #
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+
+        self.a2a.dispatch(
+            out_expert_num_tokens=expert_num_tokens,
+            out_expert_x=expert_x,
+            out_expert_x_scale=expert_x_scale,
+            dp_x=a1q,
+            dp_x_scale=a1q_scale,
+            indices=rank_topk_ids,
+            bound_m=bound_m,
+            #
+            do_send=False,
+            do_recv=True,
+            #
         )
         if expert_x_scale is not None:
             expert_x_scale = expert_x_scale[:, :, 0:1]
 
         return expert_x, expert_x_scale, expert_num_tokens, None, None
 
-    def finalize(
+    def prepare(
+        self,
+        a1: torch.Tensor,
+        a1_scale: Optional[torch.Tensor],
+        a2_scale: Optional[torch.Tensor],
+        rank_topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        num_experts: int,
+        expert_map: Optional[torch.Tensor],
+        apply_router_weight_on_input: bool,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+
+        expert_x, expert_x_scale, expert_num_tokens, topk_ids, topk_weights, \
+          a1q, a1q_scale, rank_topk_ids, bound_m = self.prepare_a(
+            a1,
+            a1_scale,
+            a2_scale,
+            rank_topk_weights,
+            rank_topk_ids,
+            num_experts,
+            expert_map,
+            apply_router_weight_on_input,
+        )
+
+        return self.prepare_b(
+            a1,
+            a1_scale,
+            a2_scale,
+            rank_topk_weights,
+            rank_topk_ids,
+            num_experts,
+            expert_map,
+            apply_router_weight_on_input,
+            #
+            expert_num_tokens=expert_num_tokens,
+            expert_x=expert_x,
+            expert_x_scale=expert_x_scale,
+            a1q=a1q,
+            a1q_scale=a1q_scale,
+            # rank_topk_ids=rank_topk_ids,
+            bound_m=bound_m,
+            #
+        )
+
+    def finalize_a(
         self,
         output: torch.Tensor,
         fused_expert_output: torch.Tensor,
@@ -152,8 +238,67 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         if apply_router_weight_on_input:
             topk_weights = torch.ones_like(topk_weights)
 
-        self.a2a.combine(out_tokens=output,
-                         indices=topk_ids,
-                         weights=topk_weights,
-                         expert_y=fused_expert_output,
-                         bound_m=bound_m)
+        self.a2a.combine(
+            out_tokens=output,
+            indices=topk_ids,
+            weights=topk_weights,
+            expert_y=fused_expert_output,
+            bound_m=bound_m,
+            #
+            do_send=True,
+            do_recv=False,
+            #
+        )
+
+        return output, fused_expert_output, topk_weights, topk_ids, bound_m
+
+    def finalize_b(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        bound_m: torch.Tensor,
+        #
+    ) -> None:
+        self.a2a.combine(
+            out_tokens=output,
+            indices=topk_ids,
+            weights=topk_weights,
+            expert_y=fused_expert_output,
+            bound_m=bound_m,
+            #
+            do_send=False,
+            do_recv=True,
+            #
+        )
+
+    def finalize(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+    ) -> None:
+
+        output, fused_expert_output, topk_weights, topk_ids, bound_m = self.finalize_a(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+        )
+
+        self.finalize_b(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+            #
+            bound_m=bound_m,
+            #
+        )
