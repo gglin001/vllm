@@ -963,7 +963,7 @@ class FusedMoE(torch.nn.Module):
                 dtype=act_dtype,
                 device=torch.cuda.current_device())
 
-        self.ubatch_ctxs = [UBContext()] * 2
+        self.ubatch_ctxs = [UBContext()] * (2+1)
 
     @property
     def tp_size(self):
@@ -1504,7 +1504,7 @@ class FusedMoE(torch.nn.Module):
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
     ):
         assert self.quant_method is not None
         # TODO: support `deepep_low_latency` and `pplx` by chunks

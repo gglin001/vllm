@@ -35,7 +35,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         self.quant_dtype = quant_dtype
         self.per_act_token = per_act_token
 
-        self.ubatch_ctxs = [UBContext()] * 2
+        self.ubatch_ctxs = [UBContext()] * (2 + 1)
 
     def max_num_tokens_per_rank(self) -> Optional[int]:
         return self.max_num_tokens
@@ -55,7 +55,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         apply_router_weight_on_input: bool,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ) -> UBContext:
         num_tokens = a1.size(0)  # M
@@ -157,7 +157,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         apply_router_weight_on_input: bool,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -197,7 +197,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         apply_router_weight_on_input: bool,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ):
         _ = self.prepare_a(
@@ -238,7 +238,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         apply_router_weight_on_input: bool,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ) -> None:
         num_tokens = output.size(0)  # M
@@ -283,7 +283,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         apply_router_weight_on_input: bool,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ) -> None:
 
@@ -314,7 +314,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         apply_router_weight_on_input: bool,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ) -> None:
         _ = self.finalize_a(

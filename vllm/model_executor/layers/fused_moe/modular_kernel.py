@@ -316,7 +316,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         self.prepare_finalize = prepare_finalize
         self.fused_experts = fused_experts
 
-        self.ubatch_ctxs = [UBContext()] * 2
+        self.ubatch_ctxs = [UBContext()] * (2 + 1)
 
     def forward(
         self,
@@ -531,7 +531,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         apply_router_weight_on_input: bool = False,
         #
         ubatch_stage: UBStage = UBStage.nop,
-        ubatch_slice: int = 0,
+        ubatch_slice: int = -1,
         #
     ) -> torch.Tensor:
 
