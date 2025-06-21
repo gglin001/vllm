@@ -31,7 +31,7 @@ from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.platforms.interface import CpuArchEnum
 from vllm.utils import direct_register_custom_op
-from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
 
 has_pplx = importlib.util.find_spec("pplx_kernels") is not None
 has_deepep = importlib.util.find_spec("deep_ep") is not None
@@ -1503,7 +1503,7 @@ class FusedMoE(torch.nn.Module):
         self,
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
-        ubatch_stage: int = 0,
+        ubatch_stage: UBStage = UBStage.nop,
         ubatch_slice: int = 0,
     ):
         assert self.quant_method is not None
@@ -1520,7 +1520,7 @@ class FusedMoE(torch.nn.Module):
         kwargs = self.forward_kwargs()
 
         # prepare
-        if ubatch_stage == 0:
+        if ubatch_stage is UBStage.dispatch:
             topk_weights, topk_ids = FusedMoE.select_experts(
                 hidden_states=hidden_states,
                 router_logits=router_logits,
@@ -1558,7 +1558,7 @@ class FusedMoE(torch.nn.Module):
             ubatch_ctx.topk_ids = topk_ids
             return ubatch_ctx
         # fused_experts
-        elif ubatch_stage == 1:
+        elif ubatch_stage is UBStage.mlp:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids
@@ -1582,7 +1582,7 @@ class FusedMoE(torch.nn.Module):
             )
             return ubatch_ctx
         # finalize
-        elif ubatch_stage == 2:
+        elif ubatch_stage is UBStage.combine:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids
@@ -1605,6 +1605,8 @@ class FusedMoE(torch.nn.Module):
                 #
             )
             return output
+        else:
+            raise Exception(f"get {ubatch_stage=}")
 
     @classmethod
     def make_expert_params_mapping(

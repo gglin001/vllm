@@ -51,6 +51,7 @@ from vllm.model_executor.model_loader.weight_utils import (
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
 from vllm.forward_context import ForwardContext, UBMetadata, get_forward_context
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
 
 from .interfaces import SupportsPP
 from .utils import (PPMissingLayer, is_pp_missing_parameter,
@@ -665,14 +666,14 @@ class DeepseekV2DecoderLayer(nn.Module):
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=0,
+            ubatch_stage=UBStage.dispatch,
             ubatch_slice=0,
         )
         # 0, fused_experts
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=1,
+            ubatch_stage=UBStage.mlp,
             ubatch_slice=0,
         )
         # 0, finalize
@@ -680,7 +681,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         final_hidden_states_0 = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=2,
+            ubatch_stage=UBStage.combine,
             ubatch_slice=0,
         )
         # 0, shared_experts
@@ -728,14 +729,14 @@ class DeepseekV2DecoderLayer(nn.Module):
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=0,
+            ubatch_stage=UBStage.dispatch,
             ubatch_slice=1,
         )
         # 1, fused_experts
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=1,
+            ubatch_stage=UBStage.mlp,
             ubatch_slice=1,
         )
         # 1, finalize
@@ -743,7 +744,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         final_hidden_states_1 = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=2,
+            ubatch_stage=UBStage.combine,
             ubatch_slice=1,
         )
         # 1, shared_experts

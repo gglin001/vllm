@@ -9,7 +9,7 @@ import torch
 import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe.utils import _resize_cache
 from vllm.utils import cdiv
-from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
 
 #
 # This file defines a set of base classes used to make MoE kernels more modular.
@@ -530,7 +530,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         a2_scale: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         #
-        ubatch_stage: int = -1,
+        ubatch_stage: UBStage = UBStage.nop,
         ubatch_slice: int = 0,
         #
     ) -> torch.Tensor:
@@ -543,7 +543,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             global_num_experts = local_num_experts
 
         # prepare
-        if ubatch_stage == 0:
+        if ubatch_stage is UBStage.dispatch:
             # TODO: support async
             _ = self.prepare_finalize.prepare_a(
                 a1,
@@ -584,7 +584,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             ubatch_ctx.topk_weights = topk_weights
             return ubatch_ctx
         # fused_experts
-        elif ubatch_stage == 1:
+        elif ubatch_stage is UBStage.mlp:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             a1q = ubatch_ctx.a1q
             a1q_scale = ubatch_ctx.a1q_scale
@@ -713,7 +713,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             ubatch_ctx.fused_out = fused_out
             return ubatch_ctx
         # finalize
-        elif ubatch_stage == 2:
+        elif ubatch_stage is UBStage.combine:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             fused_out = ubatch_ctx.fused_out
             topk_ids = ubatch_ctx.topk_ids
@@ -742,3 +742,5 @@ class FusedMoEModularKernel(torch.nn.Module):
             )
 
             return output
+        else:
+            raise Exception(f"get {ubatch_stage=}")
