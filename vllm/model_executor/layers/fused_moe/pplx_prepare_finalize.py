@@ -8,6 +8,7 @@ import torch
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.model_executor.layers.fused_moe.utils import (
     moe_kernel_quantize_input)
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext
 
 
 # The max_num_tokens, world_size and dp_size must be the same
@@ -34,6 +35,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         self.quant_dtype = quant_dtype
         self.per_act_token = per_act_token
 
+        self.ubatch_ctxs = [UBContext()] * 2
+
     def max_num_tokens_per_rank(self) -> Optional[int]:
         return self.max_num_tokens
 
@@ -50,8 +53,11 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
-               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        #
+        ubatch_stage: int = -1,
+        ubatch_slice: int = 0,
+        #
+    ) -> UBContext:
         num_tokens = a1.size(0)  # M
         hidden_dim = a1.size(-1)  # K
 
@@ -128,7 +134,16 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             do_recv=False,
             #
         )
-        return expert_x, expert_x_scale, expert_num_tokens, None, None, a1q, a1q_scale, rank_topk_ids, bound_m
+
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        ubatch_ctx.expert_num_tokens = expert_num_tokens
+        ubatch_ctx.expert_x = expert_x
+        ubatch_ctx.expert_x_scale = expert_x_scale
+        ubatch_ctx.a1q = a1q
+        ubatch_ctx.a1q_scale = a1q_scale
+        ubatch_ctx.rank_topk_ids = rank_topk_ids
+        ubatch_ctx.bound_m = bound_m
+        return ubatch_ctx
 
     def prepare_b(
         self,
@@ -141,25 +156,25 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        expert_num_tokens: torch.Tensor,
-        expert_x: torch.Tensor,
-        expert_x_scale: torch.Tensor,
-        a1q: torch.Tensor,
-        a1q_scale: torch.Tensor,
-        # rank_topk_ids: torch.Tensor,
-        bound_m: torch.Tensor,
+        ubatch_stage: int = -1,
+        ubatch_slice: int = 0,
         #
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
 
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        expert_num_tokens = ubatch_ctx.expert_num_tokens
+        expert_x = ubatch_ctx.expert_x
+        expert_x_scale = ubatch_ctx.expert_x_scale
+
         self.a2a.dispatch(
-            out_expert_num_tokens=expert_num_tokens,
-            out_expert_x=expert_x,
-            out_expert_x_scale=expert_x_scale,
-            dp_x=a1q,
-            dp_x_scale=a1q_scale,
-            indices=rank_topk_ids,
-            bound_m=bound_m,
+            out_expert_num_tokens=ubatch_ctx.expert_num_tokens,
+            out_expert_x=ubatch_ctx.expert_x,
+            out_expert_x_scale=ubatch_ctx.expert_x_scale,
+            dp_x=ubatch_ctx.a1q,
+            dp_x_scale=ubatch_ctx.a1q_scale,
+            indices=ubatch_ctx.rank_topk_ids,
+            bound_m=ubatch_ctx.bound_m,
             #
             do_send=False,
             do_recv=True,
@@ -180,11 +195,12 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
-               Optional[torch.Tensor], Optional[torch.Tensor]]:
-
-        expert_x, expert_x_scale, expert_num_tokens, topk_ids, topk_weights, \
-          a1q, a1q_scale, rank_topk_ids, bound_m = self.prepare_a(
+        #
+        ubatch_stage: int = -1,
+        ubatch_slice: int = 0,
+        #
+    ):
+        _ = self.prepare_a(
             a1,
             a1_scale,
             a2_scale,
@@ -193,8 +209,11 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             num_experts,
             expert_map,
             apply_router_weight_on_input,
+            #
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
+            #
         )
-
         return self.prepare_b(
             a1,
             a1_scale,
@@ -205,13 +224,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            expert_num_tokens=expert_num_tokens,
-            expert_x=expert_x,
-            expert_x_scale=expert_x_scale,
-            a1q=a1q,
-            a1q_scale=a1q_scale,
-            # rank_topk_ids=rank_topk_ids,
-            bound_m=bound_m,
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
             #
         )
 
@@ -222,6 +236,10 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = -1,
+        ubatch_slice: int = 0,
+        #
     ) -> None:
         num_tokens = output.size(0)  # M
         # This argument is optional
@@ -250,7 +268,11 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             #
         )
 
-        return output, fused_expert_output, topk_weights, topk_ids, bound_m
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        ubatch_ctx.bound_m = bound_m
+        ubatch_ctx.topk_weights = topk_weights
+
+        return ubatch_ctx
 
     def finalize_b(
         self,
@@ -260,9 +282,15 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        bound_m: torch.Tensor,
+        ubatch_stage: int = -1,
+        ubatch_slice: int = 0,
         #
     ) -> None:
+
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        bound_m = ubatch_ctx.bound_m
+        topk_weights = ubatch_ctx.topk_weights
+
         self.a2a.combine(
             out_tokens=output,
             indices=topk_ids,
@@ -275,6 +303,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             #
         )
 
+        return output
+
     def finalize(
         self,
         output: torch.Tensor,
@@ -282,23 +312,30 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = -1,
+        ubatch_slice: int = 0,
+        #
     ) -> None:
-
-        output, fused_expert_output, topk_weights, topk_ids, bound_m = self.finalize_a(
-            output,
-            fused_expert_output,
-            topk_weights,
-            topk_ids,
-            apply_router_weight_on_input,
-        )
-
-        self.finalize_b(
+        _ = self.finalize_a(
             output,
             fused_expert_output,
             topk_weights,
             topk_ids,
             apply_router_weight_on_input,
             #
-            bound_m=bound_m,
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
+            #
+        )
+        return self.finalize_b(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+            #
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
             #
         )

@@ -9,6 +9,7 @@ import torch
 import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe.utils import _resize_cache
 from vllm.utils import cdiv
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext
 
 #
 # This file defines a set of base classes used to make MoE kernels more modular.
@@ -293,14 +294,6 @@ def _chunk_scales(scales: Optional[torch.Tensor], start: int,
     return None
 
 
-# fmt:off
-from dataclasses import dataclass  # noqa: E402
-@dataclass
-class UBContext:
-    pass
-# fmt:on
-
-
 class FusedMoEModularKernel(torch.nn.Module):
     """
     This class combines a FusedMoEPrepareAndFinalize instance and
@@ -538,7 +531,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         apply_router_weight_on_input: bool = False,
         #
         ubatch_stage: int = -1,
-        ubatch_slice: int = -1,
+        ubatch_slice: int = 0,
         #
     ) -> torch.Tensor:
 
@@ -552,10 +545,31 @@ class FusedMoEModularKernel(torch.nn.Module):
         # prepare
         if ubatch_stage == 0:
             # TODO: support async
+            _ = self.prepare_finalize.prepare_a(
+                a1,
+                a1_scale,
+                a2_scale,
+                topk_weights,
+                topk_ids,
+                global_num_experts,
+                expert_map,
+                apply_router_weight_on_input,
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+            )
             (a1q, a1q_scale, expert_num_tokens, _expert_topk_ids,
-             _expert_topk_weights) = self.prepare_finalize.prepare(
-                 a1, a1_scale, a2_scale, topk_weights, topk_ids,
-                 global_num_experts, expert_map, apply_router_weight_on_input)
+             _expert_topk_weights) = self.prepare_finalize.prepare_b(
+                 a1,
+                 a1_scale,
+                 a2_scale,
+                 topk_weights,
+                 topk_ids,
+                 global_num_experts,
+                 expert_map,
+                 apply_router_weight_on_input,
+                 ubatch_stage=ubatch_stage,
+                 ubatch_slice=ubatch_slice,
+             )
 
             # Maybe prepare gathered topk_ids and topk_weights from other EP ranks.
             topk_ids = topk_ids if _expert_topk_ids is None else _expert_topk_ids
@@ -708,8 +722,23 @@ class FusedMoEModularKernel(torch.nn.Module):
             a1 = hidden_states
             output = a1 if inplace else torch.zeros_like(a1)
 
-            self.prepare_finalize.finalize(output, fused_out, topk_weights,
-                                           topk_ids,
-                                           apply_router_weight_on_input)
-            ubatch_ctx.output = output
-            return ubatch_ctx
+            _ = self.prepare_finalize.finalize_a(
+                output,
+                fused_out,
+                topk_weights,
+                topk_ids,
+                apply_router_weight_on_input,
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+            )
+            _ = self.prepare_finalize.finalize_b(
+                output,
+                fused_out,
+                topk_weights,
+                topk_ids,
+                apply_router_weight_on_input,
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+            )
+
+            return output

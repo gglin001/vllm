@@ -31,6 +31,7 @@ from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.platforms.interface import CpuArchEnum
 from vllm.utils import direct_register_custom_op
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext
 
 has_pplx = importlib.util.find_spec("pplx_kernels") is not None
 has_deepep = importlib.util.find_spec("deep_ep") is not None
@@ -41,7 +42,6 @@ if current_platform.is_cuda_alike():
     from .modular_kernel import (FusedMoEModularKernel,
                                  FusedMoEPermuteExpertsUnpermute,
                                  FusedMoEPrepareAndFinalize)
-    from .modular_kernel import UBContext
     if has_pplx:
         from .pplx_prepare_finalize import PplxPrepareAndFinalize
     if has_deepep:
@@ -1504,7 +1504,7 @@ class FusedMoE(torch.nn.Module):
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
         ubatch_stage: int = 0,
-        ubatch_slice: int = -1,
+        ubatch_slice: int = 0,
     ):
         assert self.quant_method is not None
         # TODO: support `deepep_low_latency` and `pplx` by chunks
@@ -1587,7 +1587,7 @@ class FusedMoE(torch.nn.Module):
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids
 
-            ubatch_ctx_ret = self.quant_method.fused_experts.forward_ubatch(
+            output = self.quant_method.fused_experts.forward_ubatch(
                 hidden_states=hidden_states,
                 w1=layer.w13_weight,
                 w2=layer.w2_weight,
@@ -1604,7 +1604,7 @@ class FusedMoE(torch.nn.Module):
                 **kwargs,
                 #
             )
-            return ubatch_ctx_ret.output
+            return output
 
     @classmethod
     def make_expert_params_mapping(
