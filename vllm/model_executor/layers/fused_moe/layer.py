@@ -41,6 +41,7 @@ if current_platform.is_cuda_alike():
     from .modular_kernel import (FusedMoEModularKernel,
                                  FusedMoEPermuteExpertsUnpermute,
                                  FusedMoEPrepareAndFinalize)
+    from .modular_kernel import UBContext
     if has_pplx:
         from .pplx_prepare_finalize import PplxPrepareAndFinalize
     if has_deepep:
@@ -962,6 +963,8 @@ class FusedMoE(torch.nn.Module):
                 dtype=act_dtype,
                 device=torch.cuda.current_device())
 
+        self.ubatch_ctxs = [UBContext()] * 2
+
     @property
     def tp_size(self):
         return self.moe_parallel_config.tp_size
@@ -1496,8 +1499,13 @@ class FusedMoE(torch.nn.Module):
 
         return kwargs
 
-    def forward_prepare(self, hidden_states: torch.Tensor,
-                        router_logits: torch.Tensor, ubatch_slice: int):
+    def forward_ubatch(
+        self,
+        hidden_states: torch.Tensor,
+        router_logits: torch.Tensor,
+        ubatch_stage: int = 0,
+        ubatch_slice: int = -1,
+    ):
         assert self.quant_method is not None
         # TODO: support `deepep_low_latency` and `pplx` by chunks
         # assert self.moe_parallel_config.use_deepep_ht_kernels
@@ -1508,95 +1516,95 @@ class FusedMoE(torch.nn.Module):
         self.quant_method: "FusedMoEMethodBase"
         self.quant_method.fused_experts: "FusedMoEModularKernel"  # type: ignore
 
-        topk_weights, topk_ids = FusedMoE.select_experts(
-            hidden_states=hidden_states,
-            router_logits=router_logits,
-            use_grouped_topk=self.use_grouped_topk,
-            top_k=self.top_k,
-            renormalize=self.renormalize,
-            topk_group=self.topk_group,
-            num_expert_group=self.num_expert_group,
-            custom_routing_function=self.custom_routing_function,
-            scoring_func=self.scoring_func,
-            e_score_correction_bias=self.e_score_correction_bias,
-            indices_type=self.quant_method.topk_indices_dtype,
-        )
-
         layer = self
         kwargs = self.forward_kwargs()
-        return self.quant_method.fused_experts.forward_ubatch(
-            hidden_states=hidden_states,
-            w1=layer.w13_weight,
-            w2=layer.w2_weight,
-            topk_weights=topk_weights,
-            topk_ids=topk_ids,
-            inplace=True,
-            activation=self.activation,
-            apply_router_weight_on_input=self.apply_router_weight_on_input,
-            global_num_experts=self.global_num_experts,
-            expert_map=self.expert_map,
-            #
-            ubatch_stage=0,
-            ubatch_slice=ubatch_slice,
-            #
-            **kwargs,
-            #
-        )
 
-    def forward_fused_experts(self, hidden_states: torch.Tensor,
-                              router_logits: torch.Tensor, ubatch_slice: int):
-        layer = self
-        kwargs = self.forward_kwargs()
-        return self.quant_method.fused_experts.forward_ubatch(
-            hidden_states=hidden_states,
-            w1=layer.w13_weight,
-            w2=layer.w2_weight,
-            #
-            # topk_weights=topk_weights,
-            # topk_ids=topk_ids,
-            topk_weights=None,
-            topk_ids=None,
-            #
-            inplace=True,
-            activation=self.activation,
-            apply_router_weight_on_input=self.apply_router_weight_on_input,
-            global_num_experts=self.global_num_experts,
-            expert_map=self.expert_map,
-            #
-            ubatch_stage=1,
-            ubatch_slice=ubatch_slice,
-            #
-            **kwargs,
-            #
-        )
+        # prepare
+        if ubatch_stage == 0:
+            topk_weights, topk_ids = FusedMoE.select_experts(
+                hidden_states=hidden_states,
+                router_logits=router_logits,
+                use_grouped_topk=self.use_grouped_topk,
+                top_k=self.top_k,
+                renormalize=self.renormalize,
+                topk_group=self.topk_group,
+                num_expert_group=self.num_expert_group,
+                custom_routing_function=self.custom_routing_function,
+                scoring_func=self.scoring_func,
+                e_score_correction_bias=self.e_score_correction_bias,
+                indices_type=self.quant_method.topk_indices_dtype,
+            )
 
-    def forward_finalize(self, hidden_states: torch.Tensor,
-                         router_logits: torch.Tensor, ubatch_slice: int):
-        layer = self
-        kwargs = self.forward_kwargs()
-        ubatch_ctx = self.quant_method.fused_experts.forward_ubatch(
-            hidden_states=hidden_states,
-            w1=layer.w13_weight,
-            w2=layer.w2_weight,
-            #
-            # topk_weights=topk_weights,
-            # topk_ids=topk_ids,
-            topk_weights=None,
-            topk_ids=None,
-            #
-            inplace=True,
-            activation=self.activation,
-            apply_router_weight_on_input=self.apply_router_weight_on_input,
-            global_num_experts=self.global_num_experts,
-            expert_map=self.expert_map,
-            #
-            ubatch_stage=2,
-            ubatch_slice=ubatch_slice,
-            #
-            **kwargs,
-            #
-        )
-        return ubatch_ctx.output
+            self.quant_method.fused_experts.forward_ubatch(
+                hidden_states=hidden_states,
+                w1=layer.w13_weight,
+                w2=layer.w2_weight,
+                topk_weights=topk_weights,
+                topk_ids=topk_ids,
+                inplace=True,
+                activation=self.activation,
+                apply_router_weight_on_input=self.apply_router_weight_on_input,
+                global_num_experts=self.global_num_experts,
+                expert_map=self.expert_map,
+                #
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+                **kwargs,
+                #
+            )
+
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            ubatch_ctx.topk_weights = topk_weights
+            ubatch_ctx.topk_ids = topk_ids
+            return ubatch_ctx
+        # fused_experts
+        elif ubatch_stage == 1:
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            topk_weights = ubatch_ctx.topk_weights
+            topk_ids = ubatch_ctx.topk_ids
+
+            self.quant_method.fused_experts.forward_ubatch(
+                hidden_states=hidden_states,
+                w1=layer.w13_weight,
+                w2=layer.w2_weight,
+                topk_weights=topk_weights,
+                topk_ids=topk_ids,
+                inplace=True,
+                activation=self.activation,
+                apply_router_weight_on_input=self.apply_router_weight_on_input,
+                global_num_experts=self.global_num_experts,
+                expert_map=self.expert_map,
+                #
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+                **kwargs,
+                #
+            )
+            return ubatch_ctx
+        # finalize
+        elif ubatch_stage == 2:
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            topk_weights = ubatch_ctx.topk_weights
+            topk_ids = ubatch_ctx.topk_ids
+
+            ubatch_ctx_ret = self.quant_method.fused_experts.forward_ubatch(
+                hidden_states=hidden_states,
+                w1=layer.w13_weight,
+                w2=layer.w2_weight,
+                topk_weights=topk_weights,
+                topk_ids=topk_ids,
+                inplace=True,
+                activation=self.activation,
+                apply_router_weight_on_input=self.apply_router_weight_on_input,
+                global_num_experts=self.global_num_experts,
+                expert_map=self.expert_map,
+                #
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+                **kwargs,
+                #
+            )
+            return ubatch_ctx_ret.output
 
     @classmethod
     def make_expert_params_mapping(

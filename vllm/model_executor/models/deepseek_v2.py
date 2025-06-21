@@ -660,17 +660,29 @@ class DeepseekV2DecoderLayer(nn.Module):
             shared_output_0 = self.mlp.shared_experts(hidden_states_0)
         # 0, gate
         router_logits_0, _ = self.mlp.gate(hidden_states_0)
-        # 0, forward_prepare
+        # 0, prepare
         # TODO: async
-        ctx_prepare_0 = self.mlp.experts.forward_prepare(
-            hidden_states_0, router_logits_0, 0)
-        # 0, forward_fused_experts
-        ctx_experts_0 = self.mlp.experts.forward_fused_experts(
-            hidden_states_0, router_logits_0, 0)
-        # 0, forward_finalize
+        _ = self.mlp.experts.forward_ubatch(
+            hidden_states_0,
+            router_logits_0,
+            ubatch_stage=0,
+            ubatch_slice=0,
+        )
+        # 0, fused_experts
+        _ = self.mlp.experts.forward_ubatch(
+            hidden_states_0,
+            router_logits_0,
+            ubatch_stage=1,
+            ubatch_slice=0,
+        )
+        # 0, finalize
         # TODO: async
-        final_hidden_states_0 = self.mlp.experts.forward_finalize(
-            hidden_states_0, router_logits_0, 0)
+        final_hidden_states_0 = self.mlp.experts.forward_ubatch(
+            hidden_states_0,
+            router_logits_0,
+            ubatch_stage=2,
+            ubatch_slice=0,
+        )
         # 0, shared_experts
         if shared_output_0 is not None:
             final_hidden_states_0 = final_hidden_states_0 + shared_output_0
@@ -702,9 +714,9 @@ class DeepseekV2DecoderLayer(nn.Module):
         self.mlp: "DeepseekV2MoE"
         self.mlp.experts: "FusedMoE"  # type: ignore
         # 1, no split mlp
-        final_hidden_states_1 = self.mlp(hidden_states_1)
+        # final_hidden_states_1 = self.mlp(hidden_states_1)
         #
-        """
+        # """
         # 1, shared_experts
         if self.mlp.n_shared_experts is not None:
             shared_output_1 = self.mlp.shared_experts(hidden_states_1)
@@ -712,19 +724,32 @@ class DeepseekV2DecoderLayer(nn.Module):
         router_logits_1, _ = self.mlp.gate(hidden_states_1)
         # 1, forward_prepare
         # TODO: async
-        ctx_prepare_1 = self.mlp.experts.forward_prepare(
-            hidden_states_1, router_logits_1, 1)
-        # 1, forward_fused_experts
-        ctx_experts_1 = self.mlp.experts.forward_fused_experts(
-            hidden_states_1, router_logits_1, 1)
-        # 1, forward_finalize
+        # 1, prepare
+        _ = self.mlp.experts.forward_ubatch(
+            hidden_states_1,
+            router_logits_1,
+            ubatch_stage=0,
+            ubatch_slice=1,
+        )
+        # 1, fused_experts
+        _ = self.mlp.experts.forward_ubatch(
+            hidden_states_1,
+            router_logits_1,
+            ubatch_stage=1,
+            ubatch_slice=1,
+        )
+        # 1, finalize
         # TODO: async
-        final_hidden_states_1 = self.mlp.experts.forward_finalize(
-            hidden_states_1, router_logits_1, 1)
+        final_hidden_states_1 = self.mlp.experts.forward_ubatch(
+            hidden_states_1,
+            router_logits_1,
+            ubatch_stage=2,
+            ubatch_slice=1,
+        )
         # 1, shared_experts
         if shared_output_1 is not None:
             final_hidden_states_1 = final_hidden_states_1 + shared_output_1
-        """
+        # """
 
         return final_hidden_states_1, residual_1
 
