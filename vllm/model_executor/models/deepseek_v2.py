@@ -620,14 +620,141 @@ class DeepseekV2DecoderLayer(nn.Module):
         residual_1: torch.Tensor,
     ) -> torch.Tensor:
         # no ubatch
-        hidden_states_0, residual_0 = self.forward_ubatch_prefill_0(
+        # """
+        final_hidden_states_0, residual_0 = self.forward_ubatch_prefill_0(
             positions_0, hidden_states_0, residual_0)
-        hidden_states_1, residual_1 = self.forward_ubatch_prefill_1(
+        final_hidden_states_1, residual_1 = self.forward_ubatch_prefill_1(
             positions_1, hidden_states_1, residual_1)
-
+        # """
+        #
+        """
         # TODO: ubatch impl
+        if 0 == 0:
+            # 0, input_layernorm
+            if residual_0 is None:
+                residual_0 = hidden_states_0
+                hidden_states_0 = self.input_layernorm(hidden_states_0)
+            else:
+                hidden_states_0, residual_0 = self.input_layernorm(
+                    hidden_states_0, residual_0)
+            # 0, self_attn
+            with UBMetadata.set_ubatch_index(0):
+                hidden_states_0 = self.self_attn(positions_0, hidden_states_0)
+            # 0, post_attention_layernorm
+            hidden_states_0, residual_0 = self.post_attention_layernorm(
+                hidden_states_0, residual_0)
+            # 0, gate
+            router_logits_0, _ = self.mlp.gate(hidden_states_0)
+            # 0, dispatch_a
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_0,
+                router_logits_0,
+                ubatch_stage=UBStage.dispatch_a,
+                ubatch_slice=0,
+            )
 
-        return hidden_states_0, residual_0, hidden_states_1, residual_1
+        if 1 == 1:
+            # 1, input_layernorm
+            if residual_1 is None:
+                residual_1 = hidden_states_1
+                hidden_states_1 = self.input_layernorm(hidden_states_1)
+            else:
+                hidden_states_1, residual_1 = self.input_layernorm(
+                    hidden_states_1, residual_1)
+            # 1, self_attn
+            with UBMetadata.set_ubatch_index(1):
+                hidden_states_1 = self.self_attn(positions_1, hidden_states_1)
+            # 1, post_attention_layernorm
+            hidden_states_1, residual_1 = self.post_attention_layernorm(
+                hidden_states_1, residual_1)
+            # 1, gate
+            router_logits_1, _ = self.mlp.gate(hidden_states_1)
+            # 1, dispatch_a
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_1,
+                router_logits_1,
+                ubatch_stage=UBStage.dispatch_a,
+                ubatch_slice=1,
+            )
+
+        # TODO: `0, dispatch_b` will wait `1, dispatch_b` fro pplx
+        if 0 == 0:
+            # 0, dispatch_b
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_0,
+                router_logits_0,
+                ubatch_stage=UBStage.dispatch_b,
+                ubatch_slice=0,
+            )
+            # 0, fused_experts
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_0,
+                router_logits_0,
+                ubatch_stage=UBStage.mlp,
+                ubatch_slice=0,
+            )
+            # 0, combine_a
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_0,
+                router_logits_0,
+                ubatch_stage=UBStage.combine_a,
+                ubatch_slice=0,
+            )
+
+        if 1 == 1:
+            # 1, dispatch_b
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_1,
+                router_logits_1,
+                ubatch_stage=UBStage.dispatch_b,
+                ubatch_slice=1,
+            )
+            # 1, fused_experts
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_1,
+                router_logits_1,
+                ubatch_stage=UBStage.mlp,
+                ubatch_slice=1,
+            )
+            # 1, combine_a
+            _ = self.mlp.experts.forward_ubatch(
+                hidden_states_1,
+                router_logits_1,
+                ubatch_stage=UBStage.combine_a,
+                ubatch_slice=1,
+            )
+
+        if 0 == 0:
+            # 0, shared_experts
+            if self.mlp.n_shared_experts is not None:
+                shared_output_0 = self.mlp.shared_experts(hidden_states_0)
+            # 0, combine_b
+            final_hidden_states_0 = self.mlp.experts.forward_ubatch(
+                hidden_states_0,
+                router_logits_0,
+                ubatch_stage=UBStage.combine_b,
+                ubatch_slice=0,
+            )
+            # 0, shared_experts
+            if shared_output_0 is not None:
+                final_hidden_states_0 = final_hidden_states_0 + shared_output_0
+
+        if 1 == 1:
+            # 1, shared_experts
+            if self.mlp.n_shared_experts is not None:
+                shared_output_1 = self.mlp.shared_experts(hidden_states_1)
+            final_hidden_states_1 = self.mlp.experts.forward_ubatch(
+                hidden_states_1,
+                router_logits_1,
+                ubatch_stage=UBStage.combine_b,
+                ubatch_slice=1,
+            )
+            # 1, shared_experts
+            if shared_output_1 is not None:
+                final_hidden_states_1 = final_hidden_states_1 + shared_output_1
+        """
+
+        return final_hidden_states_0, residual_0, final_hidden_states_1, residual_1
 
     def forward_ubatch_prefill_0(
         self,
@@ -876,9 +1003,11 @@ class DeepseekV2Model(nn.Module):
             # """
             logger.debug(f"ubatch fin")
         else:
+            logger.debug(f"not ubatch start")
             for layer in self.layers[self.start_layer:self.end_layer]:
                 hidden_states, residual = layer(positions, hidden_states,
                                                 residual)
+            logger.debug(f"not ubatch fin")
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({

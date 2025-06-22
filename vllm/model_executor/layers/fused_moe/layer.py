@@ -963,7 +963,7 @@ class FusedMoE(torch.nn.Module):
                 dtype=act_dtype,
                 device=torch.cuda.current_device())
 
-        self.ubatch_ctxs = [UBContext()] * (2 + 1)
+        self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
 
     @property
     def tp_size(self):
@@ -1607,7 +1607,7 @@ class FusedMoE(torch.nn.Module):
             )
             return output
         else:
-            raise Exception(f"get {ubatch_stage=}")
+            raise Exception(f"get {ubatch_stage.name=}")
 
     @classmethod
     def make_expert_params_mapping(

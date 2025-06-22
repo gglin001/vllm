@@ -35,7 +35,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         self.quant_dtype = quant_dtype
         self.per_act_token = per_act_token
 
-        self.ubatch_ctxs = [UBContext()] * (2 + 1)
+        self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
 
     def max_num_tokens_per_rank(self) -> Optional[int]:
         return self.max_num_tokens

@@ -10,6 +10,9 @@ import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe.utils import _resize_cache
 from vllm.utils import cdiv
 from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
+from vllm.logger import init_logger
+
+logger = init_logger(__name__)
 
 #
 # This file defines a set of base classes used to make MoE kernels more modular.
@@ -316,7 +319,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         self.prepare_finalize = prepare_finalize
         self.fused_experts = fused_experts
 
-        self.ubatch_ctxs = [UBContext()] * (2 + 1)
+        self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
 
     def forward(
         self,
@@ -734,6 +737,7 @@ class FusedMoEModularKernel(torch.nn.Module):
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
             )
+            ubatch_ctx.output = output
             return ubatch_ctx
         # finalize
         elif ubatch_stage is UBStage.combine_b:
@@ -741,9 +745,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             fused_out = ubatch_ctx.fused_out
             topk_ids = ubatch_ctx.topk_ids
             topk_weights = ubatch_ctx.topk_weights
-
-            a1 = hidden_states
-            output = a1 if inplace else torch.zeros_like(a1)
+            output = ubatch_ctx.output
 
             _ = self.prepare_finalize.finalize_b(
                 output,
@@ -756,4 +758,4 @@ class FusedMoEModularKernel(torch.nn.Module):
             )
             return output
         else:
-            raise Exception(f"get {ubatch_stage=}")
+            raise Exception(f"get {ubatch_stage.name=}")
