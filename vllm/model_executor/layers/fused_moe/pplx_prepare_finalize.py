@@ -210,7 +210,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            ubatch_stage=ubatch_stage,
+            ubatch_stage=UBStage.dispatch_a,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -224,7 +224,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            ubatch_stage=ubatch_stage,
+            ubatch_stage=UBStage.dispatch_b,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -324,7 +324,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_ids,
             apply_router_weight_on_input,
             #
-            ubatch_stage=ubatch_stage,
+            ubatch_stage=UBStage.combine_a,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -335,7 +335,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_ids,
             apply_router_weight_on_input,
             #
-            ubatch_stage=ubatch_stage,
+            ubatch_stage=UBStage.combine_b,
             ubatch_slice=ubatch_slice,
             #
         )

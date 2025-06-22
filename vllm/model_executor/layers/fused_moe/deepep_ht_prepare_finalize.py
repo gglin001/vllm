@@ -8,6 +8,7 @@ import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm import _custom_ops as ops
 from vllm.model_executor.layers.fused_moe.utils import (
     moe_kernel_quantize_input)
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
 
 
 class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
@@ -34,10 +35,12 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         # The dispatch function returns a handle that the combine function
         # requires. We store the handle here so it is available to the
         # combine function.
-        self.handle = None
+        # self.handle = None
 
         # From https://github.com/deepseek-ai/DeepEP/blob/9fe9021f29c9083cd1808ab36b740208524d9f63/deep_ep/buffer.py#L164
         self.available_rank_configs = [2, 4, 8, 16, 24, 32, 64, 128, 144, 160]
+
+        self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
 
     def max_num_tokens_per_rank(self) -> Optional[int]:
         return None
@@ -62,70 +65,108 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             self.block_shape)
         return tokens, token_scales
 
-    def _do_dispatch(self, tokens: torch.Tensor,
-                     token_scales: Optional[torch.Tensor],
-                     rank_topk_ids: torch.Tensor,
-                     rank_topk_weights: torch.Tensor, num_experts: int):
-
-        has_scales = token_scales is not None
-
-        (num_tokens_per_rank, num_tokens_per_rdma_rank, expert_num_tokens,
-         is_token_in_rank, event) = self.buffer.get_dispatch_layout(
-             topk_idx=rank_topk_ids,
-             num_experts=num_experts,
-             previous_event=None,
-             async_finish=False,
-             allocate_on_comm_stream=False)
-
-        token_data = tokens
-        if has_scales:
-            token_data = (tokens, token_scales)
-
-        (
-            token_data, expert_topk_ids, expert_topk_weights,
-            expert_num_tokens_per_expert_list, self.handle, event
-        ) = self.buffer.dispatch(
-            x=token_data,
-            handle=None,
-            num_tokens_per_rank=num_tokens_per_rank,
-            num_tokens_per_rdma_rank=num_tokens_per_rdma_rank,
-            is_token_in_rank=is_token_in_rank,
-            num_tokens_per_expert=expert_num_tokens,
-            topk_idx=rank_topk_ids,
-            topk_weights=rank_topk_weights,
-            # expert_alignment rounds the number of tokens per expert
-            # to this value.
-            expert_alignment=1,
-            config=self._get_dispatch_config(),
-            previous_event=None,
-            async_finish=False,
-            allocate_on_comm_stream=False)
-
-        if has_scales:
-            expert_x, expert_x_scale = token_data
-        else:
-            expert_x, expert_x_scale = token_data, None
-
-        # The existing MOE kernels assume that all entries of topk_ids are
-        # valid. To that effect, set the -1s in expert_topk_ids to some expert
-        # outside this rank so the expert_map can remap it to -1 when safe.
-        # With Expert Parallel, the experts are divided amongst the rank
-        # sequentially. For rank 0, set it to num_experts - 1 and for all other
-        # ranks set it to 0 as we know that expert_map will have a -1 in those
-        # regions for those ranks.
+    def _do_dispatch(
+        self,
+        tokens: torch.Tensor,
+        token_scales: Optional[torch.Tensor],
+        rank_topk_ids: torch.Tensor,
+        rank_topk_weights: torch.Tensor,
+        num_experts: int,
         #
-        # DeepEP's topk_ids output refers to the local experts directly. Offset
-        # the topk_ids to move it back to the global experts space so it aligns
-        # with existing vLLM interfaces.
-        expert_topk_ids = torch.where(
-            expert_topk_ids == -1,
-            num_experts - 1 if self.rank_expert_offset == 0 else 0,
-            expert_topk_ids + self.rank_expert_offset)
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ):
+        if ubatch_stage is UBStage.dispatch_a:
+            previous_event = deep_ep.Buffer.capture()
 
-        return (expert_x, expert_x_scale, expert_num_tokens, expert_topk_ids,
-                expert_topk_weights)
+            # fmt: off
+            has_scales = token_scales is not None
 
-    def prepare(
+            (num_tokens_per_rank, num_tokens_per_rdma_rank, expert_num_tokens,
+            is_token_in_rank, event) = self.buffer.get_dispatch_layout(
+                topk_idx=rank_topk_ids,
+                num_experts=num_experts,
+                previous_event=previous_event,
+                async_finish=True,
+                allocate_on_comm_stream=True)
+
+            token_data = tokens
+            if has_scales:
+                token_data = (tokens, token_scales)
+
+            (
+                token_data, expert_topk_ids, expert_topk_weights,
+                expert_num_tokens_per_expert_list, handle, event
+            ) = self.buffer.dispatch(
+                x=token_data,
+                handle=None,
+                num_tokens_per_rank=num_tokens_per_rank,
+                num_tokens_per_rdma_rank=num_tokens_per_rdma_rank,
+                is_token_in_rank=is_token_in_rank,
+                num_tokens_per_expert=expert_num_tokens,
+                topk_idx=rank_topk_ids,
+                topk_weights=rank_topk_weights,
+                # expert_alignment rounds the number of tokens per expert
+                # to this value.
+                expert_alignment=1,
+                config=self._get_dispatch_config(),
+                previous_event=event,
+                async_finish=True,
+                allocate_on_comm_stream=True)
+            # fmt: on
+
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            ubatch_ctx.expert_num_tokens = expert_num_tokens
+            ubatch_ctx.token_data = token_data
+            ubatch_ctx.expert_topk_ids = expert_topk_ids
+            ubatch_ctx.expert_topk_weights = expert_topk_weights
+            ubatch_ctx.expert_num_tokens_per_expert_list = expert_num_tokens_per_expert_list
+            ubatch_ctx.event = event
+            ubatch_ctx.handle = handle
+            return ubatch_ctx
+        elif ubatch_stage is UBStage.dispatch_b:
+            ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+            expert_num_tokens = ubatch_ctx.expert_num_tokens
+            token_data = ubatch_ctx.token_data
+            expert_topk_ids = ubatch_ctx.expert_topk_ids
+            expert_topk_weights = ubatch_ctx.expert_topk_weights
+            expert_num_tokens_per_expert_list = ubatch_ctx.expert_num_tokens_per_expert_list
+            event = ubatch_ctx.event
+
+            event.current_stream_wait()
+
+            # fmt: off
+            has_scales = token_scales is not None
+
+            if has_scales:
+                expert_x, expert_x_scale = token_data
+            else:
+                expert_x, expert_x_scale = token_data, None
+
+            # The existing MOE kernels assume that all entries of topk_ids are
+            # valid. To that effect, set the -1s in expert_topk_ids to some expert
+            # outside this rank so the expert_map can remap it to -1 when safe.
+            # With Expert Parallel, the experts are divided amongst the rank
+            # sequentially. For rank 0, set it to num_experts - 1 and for all other
+            # ranks set it to 0 as we know that expert_map will have a -1 in those
+            # regions for those ranks.
+            #
+            # DeepEP's topk_ids output refers to the local experts directly. Offset
+            # the topk_ids to move it back to the global experts space so it aligns
+            # with existing vLLM interfaces.
+            expert_topk_ids = torch.where(
+                expert_topk_ids == -1,
+                num_experts - 1 if self.rank_expert_offset == 0 else 0,
+                expert_topk_ids + self.rank_expert_offset)
+
+            return (expert_x, expert_x_scale, expert_num_tokens, expert_topk_ids,
+                    expert_topk_weights)
+            # fmt: on
+        else:
+            raise Exception(f"get {ubatch_stage.name=}")
+
+    def prepare_a(
         self,
         a1: torch.Tensor,
         a1_scale: Optional[torch.Tensor],
@@ -135,8 +176,13 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
-               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        #
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ) -> UBContext:
+
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
 
         if apply_router_weight_on_input:
             topk = rank_topk_ids.size(1)
@@ -161,13 +207,78 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         if per_token_quant:
             a1q, a1q_scale = self._do_quant(a1, a1_scale, per_act_token=True)
+            _ = self._do_dispatch(
+                tokens=a1q,
+                token_scales=a1q_scale,
+                rank_topk_ids=rank_topk_ids,
+                rank_topk_weights=rank_topk_weights,
+                num_experts=num_experts,
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+            )
+        else:
+            # DeepEP kernels only support dispatching per-token-quant
+            # quantization. dispatch in bfloat16.
+            _ = self._do_dispatch(
+                tokens=a1,
+                token_scales=None,
+                rank_topk_ids=rank_topk_ids,
+                rank_topk_weights=rank_topk_weights,
+                num_experts=num_experts,
+                ubatch_stage=ubatch_stage,
+                ubatch_slice=ubatch_slice,
+            )
+            # # quantize now
+            # expert_x_scale = None
+            # if expert_x.numel() != 0:
+            #     expert_x, expert_x_scale = self._do_quant(expert_x,
+            #                                               a1_scale,
+            #                                               per_act_token=False)
+
+        ubatch_ctx.per_token_quant = per_token_quant
+        if per_token_quant:
+            ubatch_ctx.a1q = a1q
+            ubatch_ctx.a1q_scale = a1q_scale
+        else:
+            ubatch_ctx.a1 = a1
+        return ubatch_ctx
+
+    def prepare_b(
+        self,
+        a1: torch.Tensor,
+        a1_scale: Optional[torch.Tensor],
+        a2_scale: Optional[torch.Tensor],
+        rank_topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        num_experts: int,
+        expert_map: Optional[torch.Tensor],
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        per_token_quant = ubatch_ctx.per_token_quant
+        if per_token_quant:
+            a1q = ubatch_ctx.a1q
+            a1q_scale = ubatch_ctx.a1q_scale
+        else:
+            a1 = ubatch_ctx.a1
+
+        if per_token_quant:
+            # a1q, a1q_scale = self._do_quant(a1, a1_scale, per_act_token=True)
             (expert_x, expert_x_scale, expert_num_tokens, expert_topk_ids,
              expert_topk_weights) = self._do_dispatch(
                  tokens=a1q,
                  token_scales=a1q_scale,
                  rank_topk_ids=rank_topk_ids,
                  rank_topk_weights=rank_topk_weights,
-                 num_experts=num_experts)
+                 num_experts=num_experts,
+                 ubatch_stage=ubatch_stage,
+                 ubatch_slice=ubatch_slice,
+             )
         else:
             # DeepEP kernels only support dispatching per-token-quant
             # quantization. dispatch in bfloat16.
@@ -177,7 +288,10 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                  token_scales=None,
                  rank_topk_ids=rank_topk_ids,
                  rank_topk_weights=rank_topk_weights,
-                 num_experts=num_experts)
+                 num_experts=num_experts,
+                 ubatch_stage=ubatch_stage,
+                 ubatch_slice=ubatch_slice,
+             )
             # quantize now
             expert_x_scale = None
             if expert_x.numel() != 0:
@@ -187,6 +301,50 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         return (expert_x, expert_x_scale, expert_num_tokens, expert_topk_ids,
                 expert_topk_weights)
+
+    def prepare(
+        self,
+        a1: torch.Tensor,
+        a1_scale: Optional[torch.Tensor],
+        a2_scale: Optional[torch.Tensor],
+        rank_topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        num_experts: int,
+        expert_map: Optional[torch.Tensor],
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ):
+        _ = self.prepare_a(
+            a1,
+            a1_scale,
+            a2_scale,
+            rank_topk_weights,
+            rank_topk_ids,
+            num_experts,
+            expert_map,
+            apply_router_weight_on_input,
+            #
+            ubatch_stage=UBStage.dispatch_a,
+            ubatch_slice=ubatch_slice,
+            #
+        )
+        return self.prepare_b(
+            a1,
+            a1_scale,
+            a2_scale,
+            rank_topk_weights,
+            rank_topk_ids,
+            num_experts,
+            expert_map,
+            apply_router_weight_on_input,
+            #
+            ubatch_stage=UBStage.dispatch_b,
+            ubatch_slice=ubatch_slice,
+            #
+        )
 
     def _apply_weights_and_reduce(self, num_tokens: int,
                                   fused_expert_output: torch.Tensor,
@@ -212,11 +370,25 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         return out
 
-    def finalize(self, output: torch.Tensor, fused_expert_output: torch.Tensor,
-                 topk_weights: torch.Tensor, topk_ids: torch.Tensor,
-                 apply_router_weight_on_input: bool) -> None:
+    def finalize_a(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ) -> None:
 
-        assert self.handle is not None
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        event = ubatch_ctx.event
+        handle = ubatch_ctx.handle
+
+        # assert self.handle is not None
+        assert ubatch_ctx.handle is not None
 
         # fused_expert_output can have 0 tokens - This happens when none of the
         # tokens from the all2all reach this EP rank.
@@ -230,11 +402,74 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         combined_x, _, event = self.buffer.combine(
             x=fused_expert_output,
-            handle=self.handle,
+            handle=handle,
             topk_weights=None,
             config=self._get_combine_config(),
-            previous_event=None,
-            async_finish=False,
-            allocate_on_comm_stream=False)
+            previous_event=event,
+            async_finish=True,
+            allocate_on_comm_stream=True,
+        )
+        # Respect inplace outputs.
+        # output.copy_(combined_x, non_blocking=True)
+
+        ubatch_ctx.event = event
+        ubatch_ctx.combined_x = combined_x
+        ubatch_ctx.output = output
+        return ubatch_ctx
+
+    def finalize_b(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ) -> None:
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        event = ubatch_ctx.event
+        combined_x = ubatch_ctx.combined_x
+        output = ubatch_ctx.output
+
+        event.current_stream_wait()
+
         # Respect inplace outputs.
         output.copy_(combined_x, non_blocking=True)
+
+    def finalize(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_slice: int = -1,
+        #
+    ) -> None:
+        _ = self.finalize_a(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+            #
+            ubatch_stage=UBStage.combine_a,
+            ubatch_slice=ubatch_slice,
+            #
+        )
+        return self.finalize_b(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+            #
+            ubatch_stage=UBStage.combine_b,
+            ubatch_slice=ubatch_slice,
+            #
+        )

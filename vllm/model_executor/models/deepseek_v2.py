@@ -619,16 +619,17 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states_1: torch.Tensor,
         residual_1: torch.Tensor,
     ) -> torch.Tensor:
-        # no ubatch
-        # """
-        final_hidden_states_0, residual_0 = self.forward_ubatch_prefill_0(
-            positions_0, hidden_states_0, residual_0)
-        final_hidden_states_1, residual_1 = self.forward_ubatch_prefill_1(
-            positions_1, hidden_states_1, residual_1)
-        # """
+        use_ubatch = True
+        if not use_ubatch:
+            # no ubatch
+            final_hidden_states_0, residual_0 = self.forward_ubatch_prefill_0(
+                positions_0, hidden_states_0, residual_0)
+            final_hidden_states_1, residual_1 = self.forward_ubatch_prefill_1(
+                positions_1, hidden_states_1, residual_1)
+            return final_hidden_states_0, residual_0, final_hidden_states_1, residual_1
         #
-        """
-        # TODO: ubatch impl
+        # """
+        # ubatch impl
         if 0 == 0:
             # 0, input_layernorm
             if residual_0 is None:
@@ -752,7 +753,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             # 1, shared_experts
             if shared_output_1 is not None:
                 final_hidden_states_1 = final_hidden_states_1 + shared_output_1
-        """
+        # """
 
         return final_hidden_states_0, residual_0, final_hidden_states_1, residual_1
 
