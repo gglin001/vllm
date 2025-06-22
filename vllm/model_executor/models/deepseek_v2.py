@@ -627,8 +627,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             final_hidden_states_1, residual_1 = self.forward_ubatch_prefill_1(
                 positions_1, hidden_states_1, residual_1)
             return final_hidden_states_0, residual_0, final_hidden_states_1, residual_1
-        #
-        # """
+
         # ubatch impl
         if 0 == 0:
             # 0, input_layernorm
@@ -678,7 +677,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 ubatch_slice=1,
             )
 
-        # TODO: `0, dispatch_b` will wait `1, dispatch_b` fro pplx
+        # TODO: `0, dispatch_b` will wait `1, dispatch_b` for pplx
         if 0 == 0:
             # 0, dispatch_b
             _ = self.mlp.experts.forward_ubatch(
@@ -725,6 +724,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 ubatch_slice=1,
             )
 
+        # TODO: make cross layer pipeline
         if 0 == 0:
             # 0, shared_experts
             if self.mlp.n_shared_experts is not None:
@@ -736,7 +736,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 ubatch_stage=UBStage.combine_b,
                 ubatch_slice=0,
             )
-            # 0, shared_experts
+            # 0, add shared_experts
             if shared_output_0 is not None:
                 final_hidden_states_0 = final_hidden_states_0 + shared_output_0
 
@@ -744,16 +744,16 @@ class DeepseekV2DecoderLayer(nn.Module):
             # 1, shared_experts
             if self.mlp.n_shared_experts is not None:
                 shared_output_1 = self.mlp.shared_experts(hidden_states_1)
+            # 1, combine_b
             final_hidden_states_1 = self.mlp.experts.forward_ubatch(
                 hidden_states_1,
                 router_logits_1,
                 ubatch_stage=UBStage.combine_b,
                 ubatch_slice=1,
             )
-            # 1, shared_experts
+            # 1, add shared_experts
             if shared_output_1 is not None:
                 final_hidden_states_1 = final_hidden_states_1 + shared_output_1
-        # """
 
         return final_hidden_states_0, residual_0, final_hidden_states_1, residual_1
 
@@ -779,24 +779,26 @@ class DeepseekV2DecoderLayer(nn.Module):
             hidden_states_0, residual_0)
 
         self.mlp: "DeepseekV2MoE"
-        self.mlp.experts: "FusedMoE"  # type: ignore
-        # 0, no split mlp
-        # final_hidden_states_0 = self.mlp(hidden_states_0)
-        #
-        # """
+        self.mlp.experts: "FusedMoE"
+        use_split_mlp = False
+        if use_split_mlp:
+            # 0, no split mlp
+            final_hidden_states_0 = self.mlp(hidden_states_0)
+            return final_hidden_states_0
+
         # 0, shared_experts
         if self.mlp.n_shared_experts is not None:
             shared_output_0 = self.mlp.shared_experts(hidden_states_0)
         # 0, gate
         router_logits_0, _ = self.mlp.gate(hidden_states_0)
-        # 0, prepare
-        # TODO: async
+        # 0, dispatch_a
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
             ubatch_stage=UBStage.dispatch_a,
             ubatch_slice=0,
         )
+        # 0, dispatch_b
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
@@ -810,24 +812,23 @@ class DeepseekV2DecoderLayer(nn.Module):
             ubatch_stage=UBStage.mlp,
             ubatch_slice=0,
         )
-        # 0, finalize
-        # TODO: async
+        # 0, combine_a
         final_hidden_states_0 = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
             ubatch_stage=UBStage.combine_a,
             ubatch_slice=0,
         )
+        # 0, combine_b
         final_hidden_states_0 = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
             ubatch_stage=UBStage.combine_b,
             ubatch_slice=0,
         )
-        # 0, shared_experts
+        # 0, add shared_experts
         if shared_output_0 is not None:
             final_hidden_states_0 = final_hidden_states_0 + shared_output_0
-        # """
 
         return final_hidden_states_0, residual_0
 
@@ -853,25 +854,26 @@ class DeepseekV2DecoderLayer(nn.Module):
             hidden_states_1, residual_1)
 
         self.mlp: "DeepseekV2MoE"
-        self.mlp.experts: "FusedMoE"  # type: ignore
-        # 1, no split mlp
-        # final_hidden_states_1 = self.mlp(hidden_states_1)
-        #
-        # """
+        self.mlp.experts: "FusedMoE"
+        use_split_mlp = False
+        if use_split_mlp:
+            # 1, no split mlp
+            final_hidden_states_1 = self.mlp(hidden_states_1)
+            return final_hidden_states_1
+
         # 1, shared_experts
         if self.mlp.n_shared_experts is not None:
             shared_output_1 = self.mlp.shared_experts(hidden_states_1)
         # 1, gate
         router_logits_1, _ = self.mlp.gate(hidden_states_1)
-        # 1, forward_prepare
-        # TODO: async
-        # 1, prepare
+        # 1, dispatch_a
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
             ubatch_stage=UBStage.dispatch_a,
             ubatch_slice=1,
         )
+        # 1, dispatch_b
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
@@ -885,24 +887,23 @@ class DeepseekV2DecoderLayer(nn.Module):
             ubatch_stage=UBStage.mlp,
             ubatch_slice=1,
         )
-        # 1, finalize
-        # TODO: async
+        # 1, combine_a
         final_hidden_states_1 = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
             ubatch_stage=UBStage.combine_a,
             ubatch_slice=1,
         )
+        # 1, combine_b
         final_hidden_states_1 = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
             ubatch_stage=UBStage.combine_b,
             ubatch_slice=1,
         )
-        # 1, shared_experts
+        # 0, add shared_experts
         if shared_output_1 is not None:
             final_hidden_states_1 = final_hidden_states_1 + shared_output_1
-        # """
 
         return final_hidden_states_1, residual_1
 
@@ -984,7 +985,7 @@ class DeepseekV2Model(nn.Module):
             logger.debug(f"ubatch start")
             # logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
 
-            # TODO(allen): rm , here just for debug
+            # TODO: rm , here just for debug
             """
             logger.debug(f"set forward_context.ub_metadata.ubatch_index = -1")
             forward_context.ub_metadata.ubatch_index = -1
