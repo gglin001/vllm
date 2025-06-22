@@ -545,7 +545,6 @@ class FusedMoEModularKernel(torch.nn.Module):
         if global_num_experts == -1:
             global_num_experts = local_num_experts
 
-        # prepare
         if ubatch_stage is UBStage.dispatch_a:
             # TODO: support async
             _ = self.prepare_finalize.prepare_a(
@@ -589,7 +588,6 @@ class FusedMoEModularKernel(torch.nn.Module):
             ubatch_ctx.topk_ids = topk_ids
             ubatch_ctx.topk_weights = topk_weights
             return ubatch_ctx
-        # fused_experts
         elif ubatch_stage is UBStage.mlp:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             a1q = ubatch_ctx.a1q
@@ -718,7 +716,6 @@ class FusedMoEModularKernel(torch.nn.Module):
 
             ubatch_ctx.fused_out = fused_out
             return ubatch_ctx
-        # finalize
         elif ubatch_stage is UBStage.combine_a:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             fused_out = ubatch_ctx.fused_out
@@ -739,7 +736,6 @@ class FusedMoEModularKernel(torch.nn.Module):
             )
             ubatch_ctx.output = output
             return ubatch_ctx
-        # finalize
         elif ubatch_stage is UBStage.combine_b:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             fused_out = ubatch_ctx.fused_out
