@@ -901,7 +901,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Timeout in seconds for execute_model RPC calls in multiprocessing
     # executor (only applies when TP > 1).
     "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS":
-    lambda: int(os.getenv("VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS", "300")),
+    lambda: int(os.getenv("VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS", "30000")),
 
     # KV Cache layout used throughout vllm.
     # Some common values are:
