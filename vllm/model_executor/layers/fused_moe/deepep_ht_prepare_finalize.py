@@ -25,9 +25,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                  quant_dtype: Optional[torch.dtype] = None,
                  block_shape: Optional[list[int]] = None):
         super().__init__()
-        assert isinstance(buffers, list)
-        assert len(buffers) == 3
-        self.buffers = buffers
+        # self.buffer = buffer
         self.world_size = world_size
         self.rank = rank
         self.dp_size = dp_size
@@ -42,6 +40,9 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         # From https://github.com/deepseek-ai/DeepEP/blob/9fe9021f29c9083cd1808ab36b740208524d9f63/deep_ep/buffer.py#L164
         self.available_rank_configs = [2, 4, 8, 16, 24, 32, 64, 128, 144, 160]
 
+        assert isinstance(buffers, list)
+        assert len(buffers) == 3
+        self.buffers = buffers
         self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
 
     def max_num_tokens_per_rank(self) -> Optional[int]:
@@ -385,7 +386,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         ubatch_stage: UBStage = UBStage.nop,
         ubatch_slice: int = -1,
         #
-    ) -> None:
+    ) -> UBContext:
 
         buffer = self.buffers[ubatch_slice]
         ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
