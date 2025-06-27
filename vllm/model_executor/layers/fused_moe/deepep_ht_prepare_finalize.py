@@ -77,13 +77,13 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         rank_topk_weights: torch.Tensor,
         num_experts: int,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ):
         buffer = self.buffers[ubatch_slice]
 
-        if ubatch_stage is UBStage.dispatch_a:
+        if ubatch_stage == UBStage.dispatch_a.value:
             previous_event = deep_ep.Buffer.capture()
 
             # fmt: off
@@ -131,7 +131,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             ubatch_ctx.event = event
             ubatch_ctx.handle = handle
             return ubatch_ctx
-        elif ubatch_stage is UBStage.dispatch_b:
+        elif ubatch_stage == UBStage.dispatch_b.value:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             expert_num_tokens = ubatch_ctx.expert_num_tokens
             token_data = ubatch_ctx.token_data
@@ -183,7 +183,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> UBContext:
@@ -260,7 +260,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
@@ -319,7 +319,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ):
@@ -333,7 +333,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.dispatch_a,
+            ubatch_stage=UBStage.dispatch_a.value,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -347,7 +347,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.dispatch_b,
+            ubatch_stage=UBStage.dispatch_b.value,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -385,7 +385,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> UBContext:
@@ -434,7 +434,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> None:
@@ -456,7 +456,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> None:
@@ -467,7 +467,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_ids,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.combine_a,
+            ubatch_stage=UBStage.combine_a.value,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -478,7 +478,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_ids,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.combine_b,
+            ubatch_stage=UBStage.combine_b.value,
             ubatch_slice=ubatch_slice,
             #
         )

@@ -678,7 +678,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_0,
                 router_logits_0,
-                ubatch_stage=UBStage.dispatch_a,
+                ubatch_stage=UBStage.dispatch_a.value,
                 ubatch_slice=0,
             )
 
@@ -702,7 +702,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_1,
                 router_logits_1,
-                ubatch_stage=UBStage.dispatch_a,
+                ubatch_stage=UBStage.dispatch_a.value,
                 ubatch_slice=1,
             )
 
@@ -712,21 +712,21 @@ class DeepseekV2DecoderLayer(nn.Module):
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_0,
                 router_logits_0,
-                ubatch_stage=UBStage.dispatch_b,
+                ubatch_stage=UBStage.dispatch_b.value,
                 ubatch_slice=0,
             )
             # 0, fused_experts
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_0,
                 router_logits_0,
-                ubatch_stage=UBStage.mlp,
+                ubatch_stage=UBStage.mlp.value,
                 ubatch_slice=0,
             )
             # 0, combine_a
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_0,
                 router_logits_0,
-                ubatch_stage=UBStage.combine_a,
+                ubatch_stage=UBStage.combine_a.value,
                 ubatch_slice=0,
             )
 
@@ -735,21 +735,21 @@ class DeepseekV2DecoderLayer(nn.Module):
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_1,
                 router_logits_1,
-                ubatch_stage=UBStage.dispatch_b,
+                ubatch_stage=UBStage.dispatch_b.value,
                 ubatch_slice=1,
             )
             # 1, fused_experts
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_1,
                 router_logits_1,
-                ubatch_stage=UBStage.mlp,
+                ubatch_stage=UBStage.mlp.value,
                 ubatch_slice=1,
             )
             # 1, combine_a
             _ = self.mlp.experts.forward_ubatch(
                 hidden_states_1,
                 router_logits_1,
-                ubatch_stage=UBStage.combine_a,
+                ubatch_stage=UBStage.combine_a.value,
                 ubatch_slice=1,
             )
 
@@ -762,7 +762,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             final_hidden_states_0 = self.mlp.experts.forward_ubatch(
                 hidden_states_0,
                 router_logits_0,
-                ubatch_stage=UBStage.combine_b,
+                ubatch_stage=UBStage.combine_b.value,
                 ubatch_slice=0,
             )
             # 0, add shared_experts
@@ -777,7 +777,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             final_hidden_states_1 = self.mlp.experts.forward_ubatch(
                 hidden_states_1,
                 router_logits_1,
-                ubatch_stage=UBStage.combine_b,
+                ubatch_stage=UBStage.combine_b.value,
                 ubatch_slice=1,
             )
             # 1, add shared_experts
@@ -824,35 +824,35 @@ class DeepseekV2DecoderLayer(nn.Module):
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.dispatch_a,
+            ubatch_stage=UBStage.dispatch_a.value,
             ubatch_slice=0,
         )
         # 0, dispatch_b
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.dispatch_b,
+            ubatch_stage=UBStage.dispatch_b.value,
             ubatch_slice=0,
         )
         # 0, fused_experts
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.mlp,
+            ubatch_stage=UBStage.mlp.value,
             ubatch_slice=0,
         )
         # 0, combine_a
         final_hidden_states_0 = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.combine_a,
+            ubatch_stage=UBStage.combine_a.value,
             ubatch_slice=0,
         )
         # 0, combine_b
         final_hidden_states_0 = self.mlp.experts.forward_ubatch(
             hidden_states_0,
             router_logits_0,
-            ubatch_stage=UBStage.combine_b,
+            ubatch_stage=UBStage.combine_b.value,
             ubatch_slice=0,
         )
         # 0, add shared_experts
@@ -899,35 +899,35 @@ class DeepseekV2DecoderLayer(nn.Module):
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.dispatch_a,
+            ubatch_stage=UBStage.dispatch_a.value,
             ubatch_slice=1,
         )
         # 1, dispatch_b
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.dispatch_b,
+            ubatch_stage=UBStage.dispatch_b.value,
             ubatch_slice=1,
         )
         # 1, fused_experts
         _ = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.mlp,
+            ubatch_stage=UBStage.mlp.value,
             ubatch_slice=1,
         )
         # 1, combine_a
         final_hidden_states_1 = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.combine_a,
+            ubatch_stage=UBStage.combine_a.value,
             ubatch_slice=1,
         )
         # 1, combine_b
         final_hidden_states_1 = self.mlp.experts.forward_ubatch(
             hidden_states_1,
             router_logits_1,
-            ubatch_stage=UBStage.combine_b,
+            ubatch_stage=UBStage.combine_b.value,
             ubatch_slice=1,
         )
         # 0, add shared_experts

@@ -1702,7 +1702,7 @@ class FusedMoE(torch.nn.Module):
         self,
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
     ):
         assert self.quant_method is not None
@@ -1718,7 +1718,7 @@ class FusedMoE(torch.nn.Module):
         layer = self
         kwargs = self.forward_kwargs()
 
-        if ubatch_stage is UBStage.dispatch_a:
+        if ubatch_stage == UBStage.dispatch_a.value:
             # TODO: mv out
             topk_weights, topk_ids = FusedMoE.select_experts(
                 hidden_states=hidden_states,
@@ -1756,7 +1756,7 @@ class FusedMoE(torch.nn.Module):
             ubatch_ctx.topk_weights = topk_weights
             ubatch_ctx.topk_ids = topk_ids
             return ubatch_ctx
-        elif ubatch_stage is UBStage.dispatch_b or ubatch_stage is UBStage.mlp:
+        elif ubatch_stage == UBStage.dispatch_b.value or ubatch_stage == UBStage.mlp.value:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids
@@ -1779,7 +1779,7 @@ class FusedMoE(torch.nn.Module):
                 #
             )
             return ubatch_ctx
-        elif ubatch_stage is UBStage.combine_a or ubatch_stage is UBStage.combine_b:
+        elif ubatch_stage == UBStage.combine_a.value or ubatch_stage == UBStage.combine_b.value:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             topk_weights = ubatch_ctx.topk_weights
             topk_ids = ubatch_ctx.topk_ids

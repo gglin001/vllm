@@ -537,7 +537,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         a2_scale: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> torch.Tensor:
@@ -549,7 +549,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         if global_num_experts == -1:
             global_num_experts = local_num_experts
 
-        if ubatch_stage is UBStage.dispatch_a:
+        if ubatch_stage == UBStage.dispatch_a.value:
             # TODO: support async
             _ = self.prepare_finalize.prepare_a(
                 a1,
@@ -565,7 +565,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             )
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             return ubatch_ctx
-        elif ubatch_stage is UBStage.dispatch_b:
+        elif ubatch_stage == UBStage.dispatch_b.value:
             (a1q, a1q_scale, expert_num_tokens, _expert_topk_ids,
              _expert_topk_weights) = self.prepare_finalize.prepare_b(
                  a1,
@@ -592,7 +592,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             ubatch_ctx.topk_ids = topk_ids
             ubatch_ctx.topk_weights = topk_weights
             return ubatch_ctx
-        elif ubatch_stage is UBStage.mlp:
+        elif ubatch_stage == UBStage.mlp.value:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             a1q = ubatch_ctx.a1q
             a1q_scale = ubatch_ctx.a1q_scale
@@ -720,7 +720,7 @@ class FusedMoEModularKernel(torch.nn.Module):
 
             ubatch_ctx.fused_out = fused_out
             return ubatch_ctx
-        elif ubatch_stage is UBStage.combine_a:
+        elif ubatch_stage == UBStage.combine_a.value:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             fused_out = ubatch_ctx.fused_out
             topk_ids = ubatch_ctx.topk_ids
@@ -740,7 +740,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             )
             ubatch_ctx.output = output
             return ubatch_ctx
-        elif ubatch_stage is UBStage.combine_b:
+        elif ubatch_stage == UBStage.combine_b.value:
             ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
             fused_out = ubatch_ctx.fused_out
             topk_ids = ubatch_ctx.topk_ids

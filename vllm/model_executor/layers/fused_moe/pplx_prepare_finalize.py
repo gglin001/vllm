@@ -54,7 +54,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> UBContext:
@@ -156,7 +156,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
@@ -196,7 +196,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ):
@@ -210,7 +210,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.dispatch_a,
+            ubatch_stage=UBStage.dispatch_a.value,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -224,7 +224,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             expert_map,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.dispatch_b,
+            ubatch_stage=UBStage.dispatch_b.value,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -237,7 +237,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> None:
@@ -282,7 +282,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> None:
@@ -313,7 +313,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
         #
-        ubatch_stage: UBStage = UBStage.nop,
+        ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
         #
     ) -> None:
@@ -324,7 +324,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_ids,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.combine_a,
+            ubatch_stage=UBStage.combine_a.value,
             ubatch_slice=ubatch_slice,
             #
         )
@@ -335,7 +335,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_ids,
             apply_router_weight_on_input,
             #
-            ubatch_stage=UBStage.combine_b,
+            ubatch_stage=UBStage.combine_b.value,
             ubatch_slice=ubatch_slice,
             #
         )
