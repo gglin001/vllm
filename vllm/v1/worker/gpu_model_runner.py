@@ -727,10 +727,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ubatch_slices: Optional[UBatchSlices] = self._ubatch_split(
                 self.query_start_loc_np, max_num_scheduled_tokens,
                 scheduler_output)
-            logger.debug(f"_prepare_inputs {ubatch_slices=}")
-            if self._is_dummy_ubatch(ubatch_slices[1]):
+            is_dummy_ubatch = self._is_dummy_ubatch(ubatch_slices[1])
+            logger.debug(
+                f"_prepare_inputs {ubatch_slices=}, {is_dummy_ubatch=}")
+            if is_dummy_ubatch:
                 ubatch_slices = None
-                logger.debug(f"_prepare_inputs set ubatch_slices = None")
 
         self.seq_lens_np[:num_reqs] = (
             self.input_batch.num_computed_tokens_cpu[:num_reqs] +

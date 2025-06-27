@@ -1013,7 +1013,7 @@ class DeepseekV2Model(nn.Module):
 
         if use_ubatch:
             assert forward_context.ub_metadata is not None
-            logger.debug(f"ubatch start")
+            # logger.debug(f"ubatch start")
             # logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
 
             # TODO: rm , here just for debug
@@ -1034,13 +1034,13 @@ class DeepseekV2Model(nn.Module):
             hidden_states, residual = self.forward_ubatch(
                 positions, hidden_states, residual, num_no_ubatch_layers)
             # """
-            logger.debug(f"ubatch fin")
+            # logger.debug(f"ubatch fin")
         else:
-            logger.debug(f"not ubatch start")
+            # logger.debug(f"not ubatch start")
             for layer in self.layers[self.start_layer:self.end_layer]:
                 hidden_states, residual = layer(positions, hidden_states,
                                                 residual)
-            logger.debug(f"not ubatch fin")
+            # logger.debug(f"not ubatch fin")
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
