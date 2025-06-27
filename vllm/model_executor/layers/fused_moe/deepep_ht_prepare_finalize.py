@@ -17,7 +17,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
     """
 
     def __init__(self,
-                 buffer: deep_ep.Buffer,
+                 buffers: list[deep_ep.Buffer],
                  world_size: int,
                  rank: int,
                  dp_size: int,
@@ -25,7 +25,9 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                  quant_dtype: Optional[torch.dtype] = None,
                  block_shape: Optional[list[int]] = None):
         super().__init__()
-        self.buffer = buffer
+        assert isinstance(buffers, list)
+        assert len(buffers) == 3
+        self.buffers = buffers
         self.world_size = world_size
         self.rank = rank
         self.dp_size = dp_size
@@ -77,6 +79,8 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         ubatch_slice: int = -1,
         #
     ):
+        buffer = self.buffers[ubatch_slice]
+
         if ubatch_stage is UBStage.dispatch_a:
             previous_event = deep_ep.Buffer.capture()
 
@@ -84,7 +88,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             has_scales = token_scales is not None
 
             (num_tokens_per_rank, num_tokens_per_rdma_rank, expert_num_tokens,
-            is_token_in_rank, event) = self.buffer.get_dispatch_layout(
+            is_token_in_rank, event) = buffer.get_dispatch_layout(
                 topk_idx=rank_topk_ids,
                 num_experts=num_experts,
                 previous_event=previous_event,
@@ -98,7 +102,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             (
                 token_data, expert_topk_ids, expert_topk_weights,
                 expert_num_tokens_per_expert_list, handle, event
-            ) = self.buffer.dispatch(
+            ) = buffer.dispatch(
                 x=token_data,
                 handle=None,
                 num_tokens_per_rank=num_tokens_per_rank,
@@ -383,6 +387,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         #
     ) -> None:
 
+        buffer = self.buffers[ubatch_slice]
         ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
         event = ubatch_ctx.event
         handle = ubatch_ctx.handle
@@ -400,7 +405,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                 apply_router_weight_on_input=apply_router_weight_on_input,
                 output_dtype=output.dtype)
 
-        combined_x, _, event = self.buffer.combine(
+        combined_x, _, event = buffer.combine(
             x=fused_expert_output,
             handle=handle,
             topk_weights=None,

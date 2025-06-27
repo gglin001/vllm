@@ -137,6 +137,7 @@ class DeepEPAll2AllManagerBase(All2AllManagerBase):
         assert has_deepep, "DeepEP kernels not found. Please follow https://github.com/vllm-project/vllm/blob/main/tools/ep_kernels/README.md to install DeepEP kernels."  # noqa
         super().__init__(cpu_group)
         self.handle_cache = Cache()
+        self.handle_caches = [Cache(), Cache(), Cache()]
 
         # This is the DeepEP default. Stick to it till we can establish
         # reasonable defaults based on profiling.
@@ -186,6 +187,7 @@ class DeepEPHTAll2AllManager(DeepEPAll2AllManagerBase):
                     num_qps_per_rank=num_qps_per_rank)
 
     def get_handle(self, kwargs):
+        raise Exception("shouel use `get_handles`")
 
         assert len(kwargs) == 0, (
             "DeepEPHTAll2AllManager expects no arguments. All the required "
@@ -202,6 +204,18 @@ class DeepEPHTAll2AllManager(DeepEPAll2AllManagerBase):
         # in get_or_create must be updated.
         handle.set_num_sms(self.num_sms)
         return handle
+
+    def get_handles(self, kwargs):
+        import deep_ep
+        buffer_kwargs = self._make_all2all_kwargs(**kwargs)
+        logger.debug("DeepEP all2all args %s", buffer_kwargs)
+        handle_0 = self.handle_caches[0].get_or_create(buffer_kwargs,
+                                                       deep_ep.Buffer)
+        handle_1 = self.handle_caches[1].get_or_create(buffer_kwargs,
+                                                       deep_ep.Buffer)
+        handle_2 = self.handle_caches[2].get_or_create(buffer_kwargs,
+                                                       deep_ep.Buffer)
+        return [handle_0, handle_1, handle_2]
 
 
 class DeepEPLLAll2AllManager(DeepEPAll2AllManagerBase):

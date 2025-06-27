@@ -359,9 +359,9 @@ class FusedMoEMethodBase(QuantizeMethodBase):
             assert moe.dp_size == all2all_manager.dp_world_size
 
             all_to_all_args = dict()
-            handle = all2all_manager.get_handle(all_to_all_args)
+            handles = all2all_manager.get_handles(all_to_all_args)
             prepare_finalize = DeepEPHTPrepareAndFinalize(
-                handle,
+                handles,
                 world_size=all2all_manager.world_size,
                 rank=all2all_manager.rank,
                 dp_size=all2all_manager.dp_world_size,
