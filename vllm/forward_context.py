@@ -130,6 +130,24 @@ class UBMetadata:
         yield
         forward_context.ub_metadata.ubatch_index = prev_ubatch_index
 
+    def to_tensor(self) -> torch.Tensor:
+        assert len(self.ubatch_slices) == 2
+        # TODO: .cuda()
+        meta_tensor = torch.zeros(3, 4, dtype=torch.int32)
+        # ubatch_slice_0
+        meta_tensor[0][0] = self.ubatch_slices[0][0].start
+        meta_tensor[0][1] = self.ubatch_slices[0][0].stop
+        meta_tensor[0][2] = self.ubatch_slices[0][1].start
+        meta_tensor[0][3] = self.ubatch_slices[0][1].stop
+        # ubatch_slice_1
+        meta_tensor[1][0] = self.ubatch_slices[1][0].start
+        meta_tensor[1][1] = self.ubatch_slices[1][0].stop
+        meta_tensor[1][2] = self.ubatch_slices[1][1].start
+        meta_tensor[1][3] = self.ubatch_slices[1][1].stop
+        # ubatch_index
+        meta_tensor[2][0] = self.ubatch_index
+        return meta_tensor
+
 
 @dataclass
 class ForwardContext:
@@ -154,12 +172,18 @@ class ForwardContext:
 _forward_context: Optional[ForwardContext] = None
 
 
+@torch.compiler.disable
 def get_forward_context() -> ForwardContext:
     """Get the current forward context."""
     assert _forward_context is not None, (
         "Forward context is not set. "
         "Please use `set_forward_context` to set the forward context.")
     return _forward_context
+
+
+# @torch.library.custom_op("vllm::get_forward_context", mutates_args=("x", ))
+# def yield_and_switch_from_compute_to_comm(x: torch.Tensor) -> ForwardContext:
+#     return get_forward_context()
 
 
 @contextmanager

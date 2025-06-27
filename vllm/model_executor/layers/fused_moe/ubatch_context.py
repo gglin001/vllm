@@ -1,10 +1,20 @@
 from enum import Enum, auto
 from dataclasses import dataclass  # noqa: E402
 
+import torch
 
-@dataclass
-class UBContext:
-    pass
+# @dataclass
+# class UBContext:
+#     pass
+
+
+class UBContext(torch.nn.Module):
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self):
+        pass
 
 
 # TODO: support decoding  stages

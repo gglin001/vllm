@@ -68,6 +68,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             self.block_shape)
         return tokens, token_scales
 
+    @torch.compiler.disable
     def _do_dispatch(
         self,
         tokens: torch.Tensor,
@@ -375,6 +376,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         return out
 
+    @torch.compiler.disable
     def finalize_a(
         self,
         output: torch.Tensor,
@@ -423,6 +425,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         ubatch_ctx.output = output
         return ubatch_ctx
 
+    @torch.compiler.disable
     def finalize_b(
         self,
         output: torch.Tensor,
