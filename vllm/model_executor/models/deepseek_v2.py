@@ -1082,7 +1082,7 @@ class DeepseekV2Model(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor,
-    ) -> list[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensorw,
+    ) -> list[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
               torch.Tensor, torch.Tensor]:
         forward_context: ForwardContext = get_forward_context()
         ub_metadata = forward_context.ub_metadata
