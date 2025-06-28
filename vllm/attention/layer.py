@@ -188,6 +188,7 @@ class Attention(nn.Module):
         self.k_range = torch.tensor(envs.K_SCALE_CONSTANT, dtype=torch.float32)
         self.v_range = torch.tensor(envs.V_SCALE_CONSTANT, dtype=torch.float32)
 
+    @torch.compiler.disable
     def forward(
         self,
         query: torch.Tensor,
@@ -444,7 +445,6 @@ direct_register_custom_op(
 )
 
 
-@torch.compiler.disable
 def unified_attention_with_output(
     query: torch.Tensor,
     key: torch.Tensor,

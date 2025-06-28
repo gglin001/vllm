@@ -1548,6 +1548,7 @@ class FusedMoE(torch.nn.Module):
         else:
             return tensor_model_parallel_all_reduce(final_hidden_states)
 
+    @torch.compiler.disable
     def forward(self, hidden_states: torch.Tensor,
                 router_logits: torch.Tensor):
         return torch.ops.vllm.moe_forward(hidden_states, router_logits,

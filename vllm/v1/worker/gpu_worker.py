@@ -136,6 +136,9 @@ class Worker(WorkerBase):
             gc.collect()
             torch.cuda.empty_cache()
 
+            # for many ubatch same fn calls
+            torch._dynamo.config.recompile_limit = 32
+
             # take current memory snapshot
             self.init_snapshot = MemorySnapshot()
             self.requested_memory = (self.init_snapshot.total_memory *
