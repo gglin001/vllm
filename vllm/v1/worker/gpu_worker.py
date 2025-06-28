@@ -279,10 +279,16 @@ class Worker(WorkerBase):
         #         x for x in warmup_sizes if x not in
         #         self.vllm_config.compilation_config.cudagraph_capture_sizes
         #     ]
+        # capture_attn_cudagraph = bool(not self.model_config.enforce_eager)
+        capture_attn_cudagraph = False
         # We skip EPLB here since we don't want to record dummy metrics
         for size in sorted(warmup_sizes, reverse=True):
             logger.info("Compile and warming up model for size %d", size)
-            self.model_runner._dummy_run(size, skip_eplb=True)
+            self.model_runner._dummy_run(
+                size,
+                skip_eplb=True,
+                capture_attn_cudagraph=capture_attn_cudagraph,
+            )
         if not self.model_config.enforce_eager and self.compilation_config.use_cudagraph:
             self.model_runner.capture_model()
 

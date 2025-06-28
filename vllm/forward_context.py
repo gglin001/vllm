@@ -130,10 +130,12 @@ class UBMetadata:
         yield
         forward_context.ub_metadata.ubatch_index = prev_ubatch_index
 
-    def to_tensor(self) -> torch.Tensor:
+    def to_tensor(self, device) -> torch.Tensor:
+        if self.ubatch_slices is None:
+            return None
         assert len(self.ubatch_slices) == 2
         # TODO: .cuda()
-        meta_tensor = torch.zeros(3, 4, dtype=torch.int32)
+        meta_tensor = torch.zeros(3, 4, dtype=torch.int32, device=device)
         # ubatch_slice_0
         meta_tensor[0][0] = self.ubatch_slices[0][0].start
         meta_tensor[0][1] = self.ubatch_slices[0][0].stop

@@ -197,6 +197,7 @@ class Attention(nn.Module):
         # shape does not match the query shape, so we optionally let the model
         # definition specify the output tensor shape.
         output_shape: Optional[torch.Size] = None,
+        ubatch_slice: int = -1,
     ) -> torch.Tensor:
         """
         The KV cache is stored inside this class and is accessed via
@@ -246,7 +247,12 @@ class Attention(nn.Module):
                                   output=output)
             else:
                 torch.ops.vllm.unified_attention_with_output(
-                    query, key, value, output, self.layer_name)
+                    query,
+                    key,
+                    value,
+                    output,
+                    self.layer_name,
+                    ubatch_slice=ubatch_slice)
             return output.view(-1, hidden_size)
         else:
             if self.use_direct_call:
@@ -438,6 +444,7 @@ direct_register_custom_op(
 )
 
 
+@torch.compiler.disable
 def unified_attention_with_output(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -445,6 +452,7 @@ def unified_attention_with_output(
     output: torch.Tensor,
     layer_name: str,
     output_scale: Optional[torch.Tensor] = None,
+    ubatch_slice: int = -1,
 ) -> None:
     wait_for_kv_layer_from_connector(layer_name)
     forward_context: ForwardContext = get_forward_context()
@@ -453,10 +461,8 @@ def unified_attention_with_output(
         attn_metadata = attn_metadata[layer_name]
     elif isinstance(attn_metadata, list):
         logger.debug(
-            f"unified_attention_with_output - ubatch_index={forward_context.ub_metadata.ubatch_index}"
-        )
-        attn_metadata = attn_metadata[
-            forward_context.ub_metadata.ubatch_index][layer_name]
+            f"unified_attention_with_output - ubatch_slice={ubatch_slice}")
+        attn_metadata = attn_metadata[ubatch_slice][layer_name]
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
     self.impl.forward(self,
@@ -478,6 +484,7 @@ def unified_attention_with_output_fake(
     output: torch.Tensor,
     layer_name: str,
     output_scale: Optional[torch.Tensor] = None,
+    ubatch_slice: int = -1,
 ) -> None:
     return
 
