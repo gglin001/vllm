@@ -1082,7 +1082,8 @@ class DeepseekV2Model(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor,
-    ):
+    ) -> list[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensorw,
+              torch.Tensor, torch.Tensor]:
         forward_context: ForwardContext = get_forward_context()
         ub_metadata = forward_context.ub_metadata
         positions_0 = positions[ub_metadata.ubatch_slices[0][1]]
@@ -1102,7 +1103,7 @@ class DeepseekV2Model(nn.Module):
         residual: torch.Tensor,
         # ub_metadata: torch.Tensor,
         start_layer: int,
-    ):
+    ) -> Union[torch.Tensor, IntermediateTensors]:
         end_layer = len(self.layers)
         if start_layer == end_layer:
             return hidden_states, residual
