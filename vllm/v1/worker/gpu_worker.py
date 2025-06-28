@@ -173,12 +173,12 @@ class Worker(WorkerBase):
             assert self.profiler is not None
             # fmt: off
             import socket
-            from vllm.distributed.parallel_state import get_dp_group
+            from vllm.distributed.parallel_state import get_dp_group, get_ep_group
             tp_rank = get_tp_group().rank_in_group
-            dp_size = self.vllm_config.parallel_config.data_parallel_size
-            dp_rank = get_dp_group().rank_in_group if dp_size > 1 else 0
+            dp_rank = get_dp_group().rank_in_group
+            ep_rank = get_ep_group().rank_in_group
             worker_name = f"{socket.gethostname()}_{os.getpid()}"
-            worker_name = f"dp_{dp_rank}_tp_{tp_rank}_{worker_name}"
+            worker_name = f"dp_{dp_rank}_tp_{tp_rank}_ep_{ep_rank}_{worker_name}"
             # fmt: on
             torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
             self.profiler.on_trace_ready = torch.profiler.tensorboard_trace_handler(
