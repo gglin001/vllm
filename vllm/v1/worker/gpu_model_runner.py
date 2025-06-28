@@ -1485,6 +1485,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 positions=positions,
                 intermediate_tensors=intermediate_tensors,
                 inputs_embeds=inputs_embeds,
+                ub_metadata=ub_metadata.to_tensor(device=self.device),
             )
 
             self.maybe_wait_for_kv_save()
@@ -2168,6 +2169,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     positions=positions,
                     intermediate_tensors=intermediate_tensors,
                     inputs_embeds=inputs_embeds,
+                    ub_metadata=ub_metadata.to_tensor(device=self.device),
                 )
             if self.use_aux_hidden_state_outputs:
                 hidden_states, _ = outputs

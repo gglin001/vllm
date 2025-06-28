@@ -502,6 +502,7 @@ class DeepseekV2MLAAttention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
+        ubatch_slice: int = -1,
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
             q_c = self.q_a_proj(hidden_states)[0]
@@ -525,7 +526,9 @@ class DeepseekV2MLAAttention(nn.Module):
             kv_c_normed,
             k_pe,
             output_shape=(hidden_states.shape[0],
-                          self.num_local_heads * self.v_head_dim))
+                          self.num_local_heads * self.v_head_dim),
+            ubatch_slice=ubatch_slice,
+        )
         return self.o_proj(attn_out)[0]
 
 
@@ -667,8 +670,11 @@ class DeepseekV2DecoderLayer(nn.Module):
                 hidden_states_0, residual_0 = self.input_layernorm(
                     hidden_states_0, residual_0)
             # 0, self_attn
-            with UBMetadata.set_ubatch_index(0):
-                hidden_states_0 = self.self_attn(positions_0, hidden_states_0)
+            hidden_states_0 = self.self_attn(
+                positions_0,
+                hidden_states_0,
+                ubatch_slice=0,
+            )
             # 0, post_attention_layernorm
             hidden_states_0, residual_0 = self.post_attention_layernorm(
                 hidden_states_0, residual_0)
@@ -691,8 +697,11 @@ class DeepseekV2DecoderLayer(nn.Module):
                 hidden_states_1, residual_1 = self.input_layernorm(
                     hidden_states_1, residual_1)
             # 1, self_attn
-            with UBMetadata.set_ubatch_index(1):
-                hidden_states_1 = self.self_attn(positions_1, hidden_states_1)
+            hidden_states_1 = self.self_attn(
+                positions_1,
+                hidden_states_1,
+                ubatch_slice=1,
+            )
             # 1, post_attention_layernorm
             hidden_states_1, residual_1 = self.post_attention_layernorm(
                 hidden_states_1, residual_1)
@@ -801,8 +810,11 @@ class DeepseekV2DecoderLayer(nn.Module):
                 hidden_states_0, residual_0)
         # 0, self_attn
         self.self_attn: "DeepseekV2MLAAttention"
-        with UBMetadata.set_ubatch_index(0):
-            hidden_states_0 = self.self_attn(positions_0, hidden_states_0)
+        hidden_states_0 = self.self_attn(
+            positions_0,
+            hidden_states_0,
+            ubatch_slice=0,
+        )
         # 0, post_attention_layernorm
         hidden_states_0, residual_0 = self.post_attention_layernorm(
             hidden_states_0, residual_0)
@@ -876,8 +888,11 @@ class DeepseekV2DecoderLayer(nn.Module):
                 hidden_states_1, residual_1)
         # 1, self_attn
         self.self_attn: "DeepseekV2MLAAttention"
-        with UBMetadata.set_ubatch_index(1):
-            hidden_states_1 = self.self_attn(positions_1, hidden_states_1)
+        hidden_states_1 = self.self_attn(
+            positions_1,
+            hidden_states_1,
+            ubatch_slice=1,
+        )
         # 1, post_attention_layernorm
         hidden_states_1, residual_1 = self.post_attention_layernorm(
             hidden_states_1, residual_1)
@@ -993,6 +1008,7 @@ class DeepseekV2Model(nn.Module):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
+        ub_metadata: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -1005,15 +1021,16 @@ class DeepseekV2Model(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        forward_context: ForwardContext = get_forward_context()
-        ub_metadata = forward_context.ub_metadata
-        use_ubatch = ub_metadata.ubatch_slices is not None
-        # ubatch must working with dp>1
-        use_ubatch = use_ubatch and self.use_dp
+        # forward_context: ForwardContext = get_forward_context()
+        # ub_metadata = forward_context.ub_metadata
+        # use_ubatch = ub_metadata.ubatch_slices is not None
+        # # ubatch must working with dp>1
+        # use_ubatch = use_ubatch and self.use_dp
 
-        if use_ubatch:
-            assert forward_context.ub_metadata is not None
+        if ub_metadata is not None:
+            # assert forward_context.ub_metadata is not None
             # logger.debug(f"ubatch start")
+            # logger.debug(f"{ub_metadata=}")
             # logger.debug(f"{forward_context.ub_metadata.ubatch_slices=}")
 
             # TODO: rm , here just for debug
@@ -1032,7 +1049,8 @@ class DeepseekV2Model(nn.Module):
                 hidden_states, residual = layer(positions, hidden_states,
                                                 residual)
             hidden_states, residual = self.forward_ubatch(
-                positions, hidden_states, residual, num_no_ubatch_layers)
+                positions, hidden_states, residual, ub_metadata,
+                num_no_ubatch_layers)
             # """
             # logger.debug(f"ubatch fin")
         else:
@@ -1056,22 +1074,35 @@ class DeepseekV2Model(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor,
+        ub_metadata: torch.Tensor,
         start_layer: int,
     ):
         end_layer = len(self.layers)
         if start_layer == end_layer:
             return hidden_states, residual
 
-        forward_context: ForwardContext = get_forward_context()
-        ub_metadata = forward_context.ub_metadata
-        positions_0 = positions[ub_metadata.ubatch_slices[0][1]]
-        positions_1 = positions[ub_metadata.ubatch_slices[1][1]]
-        hidden_states_0 = hidden_states[ub_metadata.ubatch_slices[0][1]]
-        hidden_states_1 = hidden_states[ub_metadata.ubatch_slices[1][1]]
-        residual_0 = None if residual is None else residual[
-            ub_metadata.ubatch_slices[0][1]]
-        residual_1 = None if residual is None else residual[
-            ub_metadata.ubatch_slices[1][1]]
+        # forward_context: ForwardContext = get_forward_context()
+        # ub_metadata = forward_context.ub_metadata
+        # positions_0 = positions[ub_metadata.ubatch_slices[0][1]]
+        # positions_1 = positions[ub_metadata.ubatch_slices[1][1]]
+        # hidden_states_0 = hidden_states[ub_metadata.ubatch_slices[0][1]]
+        # hidden_states_1 = hidden_states[ub_metadata.ubatch_slices[1][1]]
+        # residual_0 = None if residual is None else residual[
+        #     ub_metadata.ubatch_slices[0][1]]
+        # residual_1 = None if residual is None else residual[
+        #     ub_metadata.ubatch_slices[1][1]]
+
+        # TODO: use torch.arange
+        slice_0_s = ub_metadata[0, 2]
+        slice_0_e = ub_metadata[0, 3]
+        slice_1_s = ub_metadata[1, 2]
+        slice_1_e = ub_metadata[1, 3]
+        positions_0 = positions[slice_0_s:slice_0_e]
+        positions_1 = positions[slice_1_s:slice_1_e]
+        hidden_states_0 = hidden_states[slice_0_s:slice_0_e]
+        hidden_states_1 = hidden_states[slice_1_s:slice_1_e]
+        residual_0 = None if residual is None else residual[slice_0_s:slice_0_e]
+        residual_1 = None if residual is None else residual[slice_1_s:slice_1_e]
 
         for idx in range(start_layer, end_layer):
             hidden_states_0, residual_0, hidden_states_1, residual_1 = \
@@ -1158,9 +1189,10 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        ub_metadata: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(input_ids, positions, intermediate_tensors,
-                                   inputs_embeds)
+                                   inputs_embeds, ub_metadata)
         return hidden_states
 
     def compute_logits(
