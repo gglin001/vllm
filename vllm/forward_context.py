@@ -174,7 +174,6 @@ class ForwardContext:
 _forward_context: Optional[ForwardContext] = None
 
 
-@torch.compiler.disable
 def get_forward_context() -> ForwardContext:
     """Get the current forward context."""
     assert _forward_context is not None, (
