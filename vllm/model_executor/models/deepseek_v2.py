@@ -953,8 +953,9 @@ class DeepseekV2DecoderLayer(nn.Module):
 
 
 # @support_torch_compile
-# @torch.compile(fullgraph=False, dynamic=True, backend="inductor")
-@torch.compile(fullgraph=False, dynamic=False, backend="inductor")
+# @torch.compile(fullgraph=True, dynamic=False, backend="inductor")
+# @torch.compile(fullgraph=False, dynamic=False, backend="inductor")
+@torch.compile(fullgraph=False, dynamic=True, backend="inductor")
 class DeepseekV2Model(nn.Module):
 
     fall_back_to_pt_during_load = False
@@ -1001,7 +1002,7 @@ class DeepseekV2Model(nn.Module):
                 ["hidden_states", "residual"], config.hidden_size))
         self.use_dp = vllm_config.parallel_config.data_parallel_size > 1
 
-    @torch.compiler.disable
+    # @torch.compiler.disable
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
@@ -1052,8 +1053,12 @@ class DeepseekV2Model(nn.Module):
                 hidden_states, residual = layer(positions, hidden_states,
                                                 residual)
             hidden_states, residual = self.forward_ubatch(
-                positions, hidden_states, residual, ub_metadata,
-                num_no_ubatch_layers)
+                positions,
+                hidden_states,
+                residual,
+                # ub_metadata,
+                num_no_ubatch_layers,
+            )
             # """
             # logger.debug(f"ubatch fin")
         else:
@@ -1072,12 +1077,31 @@ class DeepseekV2Model(nn.Module):
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
+    @torch.compiler.disable
+    def make_slice(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor,
+    ):
+        forward_context: ForwardContext = get_forward_context()
+        ub_metadata = forward_context.ub_metadata
+        positions_0 = positions[ub_metadata.ubatch_slices[0][1]]
+        positions_1 = positions[ub_metadata.ubatch_slices[1][1]]
+        hidden_states_0 = hidden_states[ub_metadata.ubatch_slices[0][1]]
+        hidden_states_1 = hidden_states[ub_metadata.ubatch_slices[1][1]]
+        residual_0 = None if residual is None else residual[
+            ub_metadata.ubatch_slices[0][1]]
+        residual_1 = None if residual is None else residual[
+            ub_metadata.ubatch_slices[1][1]]
+        return positions_0, positions_1, hidden_states_0, hidden_states_1, residual_0, residual_1
+
     def forward_ubatch(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor,
-        ub_metadata: torch.Tensor,
+        # ub_metadata: torch.Tensor,
         start_layer: int,
     ):
         end_layer = len(self.layers)
@@ -1095,17 +1119,20 @@ class DeepseekV2Model(nn.Module):
         # residual_1 = None if residual is None else residual[
         #     ub_metadata.ubatch_slices[1][1]]
 
-        # TODO: use torch.arange
-        slice_0_s = ub_metadata[0, 2]
-        slice_0_e = ub_metadata[0, 3]
-        slice_1_s = ub_metadata[1, 2]
-        slice_1_e = ub_metadata[1, 3]
-        positions_0 = positions[slice_0_s:slice_0_e]
-        positions_1 = positions[slice_1_s:slice_1_e]
-        hidden_states_0 = hidden_states[slice_0_s:slice_0_e]
-        hidden_states_1 = hidden_states[slice_1_s:slice_1_e]
-        residual_0 = None if residual is None else residual[slice_0_s:slice_0_e]
-        residual_1 = None if residual is None else residual[slice_1_s:slice_1_e]
+        # # TODO: use torch.arange
+        # slice_0_s = ub_metadata[0, 2]
+        # slice_0_e = ub_metadata[0, 3]
+        # slice_1_s = ub_metadata[1, 2]
+        # slice_1_e = ub_metadata[1, 3]
+        # positions_0 = positions[slice_0_s:slice_0_e]
+        # positions_1 = positions[slice_1_s:slice_1_e]
+        # hidden_states_0 = hidden_states[slice_0_s:slice_0_e]
+        # hidden_states_1 = hidden_states[slice_1_s:slice_1_e]
+        # residual_0 = None if residual is None else residual[slice_0_s:slice_0_e]
+        # residual_1 = None if residual is None else residual[slice_1_s:slice_1_e]
+
+        positions_0, positions_1, hidden_states_0, hidden_states_1, residual_0, residual_1 = \
+            self.make_slice(positions, hidden_states, residual)
 
         for idx in range(start_layer, end_layer):
             hidden_states_0, residual_0, hidden_states_1, residual_1 = \

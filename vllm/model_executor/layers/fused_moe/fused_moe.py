@@ -1561,6 +1561,7 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
         output = (M, topk, K)
         return (workspace1, workspace2, output, a.dtype)
 
+    @torch.compiler.disable
     def apply(
         self,
         output: torch.Tensor,
