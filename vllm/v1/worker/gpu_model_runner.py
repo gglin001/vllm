@@ -1487,6 +1487,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 inputs_embeds=inputs_embeds,
                 ub_metadata=ub_metadata.to_tensor(device=self.device),
             )
+            logger.debug(f"execute_model fin")
 
             self.maybe_wait_for_kv_save()
             finished_sending, finished_recving = (
@@ -2171,6 +2172,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     inputs_embeds=inputs_embeds,
                     ub_metadata=ub_metadata.to_tensor(device=self.device),
                 )
+            logger.debug(f"_dummy_run fin")
             if self.use_aux_hidden_state_outputs:
                 hidden_states, _ = outputs
             else:
