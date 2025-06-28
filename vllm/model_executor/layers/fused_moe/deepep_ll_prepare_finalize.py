@@ -7,6 +7,7 @@ import torch
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.model_executor.layers.fused_moe.utils import (
     moe_kernel_quantize_input)
+from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
 
 # DeepEP kernels quantize dispatch inputs in 128 element chunks.
 DEEPEP_QUANT_BLOCK_SIZE = 128
@@ -38,7 +39,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
     SUPPORTED_HIDDEN_SIZES = [2560, 4096, 5120, 7168]
 
     def __init__(self,
-                 buffer: deep_ep.Buffer,
+                 buffers: list[deep_ep.Buffer],
                  world_size: int,
                  dp_size: int,
                  max_tokens_per_rank: int,
@@ -47,7 +48,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                  use_fp8_dispatch: bool = False):
         super().__init__()
 
-        self.buffer = buffer
+        # self.buffer = buffer
         self.world_size = world_size
         self.dp_size = dp_size
         self.quant_dtype = quant_dtype
@@ -57,7 +58,12 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         # The dispatch function returns a handle that the combine function
         # requires. We store the handle here so it is available to the
         # combine function.
-        self.handle = None
+        # self.handle = None
+
+        assert isinstance(buffers, list)
+        assert len(buffers) == 3
+        self.buffers = buffers
+        self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
 
     def max_num_tokens_per_rank(self) -> Optional[int]:
         return self.max_tokens_per_rank
@@ -113,7 +119,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         return x, x_scales
 
-    def prepare(
+    def prepare_a(
         self,
         a1: torch.Tensor,
         a1_scale: Optional[torch.Tensor],
@@ -123,8 +129,13 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
-               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        #
+        ubatch_stage: int = UBStage.nop.value,
+        ubatch_slice: int = -1,
+        #
+    ) -> UBContext:
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        buffer = self.buffers[ubatch_slice]
 
         hidden_size = a1.size(1)
         assert hidden_size in self.SUPPORTED_HIDDEN_SIZES, \
@@ -149,25 +160,109 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             a1 = a1 * rank_topk_weights.to(a1.dtype)
 
         # Dispatch
-        expert_x, expert_num_tokens, self.handle, event, hook = \
-                self.buffer.low_latency_dispatch(a1,
-                                                rank_topk_ids,
-                                                self.max_tokens_per_rank,
-                                                num_experts,
-                                                use_fp8=self.use_fp8_dispatch,
-                                                async_finish=False,
-                                                return_recv_hook=False)
+        expert_x, expert_num_tokens, handle, event, hook = \
+            buffer.low_latency_dispatch(
+            a1,
+            rank_topk_ids,
+            self.max_tokens_per_rank,
+            num_experts,
+            use_fp8=self.use_fp8_dispatch,
+            async_finish=False,
+            return_recv_hook=True,
+        )
 
+        ubatch_ctx.handle = handle
+        ubatch_ctx.event = event
+        ubatch_ctx.hook = hook
+        ubatch_ctx.expert_x = expert_x
+        ubatch_ctx.expert_num_tokens = expert_num_tokens
+
+        return ubatch_ctx
+
+    def prepare_b(
+        self,
+        a1: torch.Tensor,
+        a1_scale: Optional[torch.Tensor],
+        a2_scale: Optional[torch.Tensor],
+        rank_topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        num_experts: int,
+        expert_map: Optional[torch.Tensor],
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = UBStage.nop.value,
+        ubatch_slice: int = -1,
+        #
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        hook = ubatch_ctx.hook
+        expert_x = ubatch_ctx.expert_x
+        expert_num_tokens = ubatch_ctx.expert_num_tokens
+
+        hook()
         expert_x, expert_x_scale = self._do_quant(expert_x, a1_scale, a2_scale,
                                                   a1.dtype)
 
         return (expert_x, expert_x_scale, expert_num_tokens, None, None)
 
-    def finalize(self, output: torch.Tensor, fused_expert_output: torch.Tensor,
-                 topk_weights: torch.Tensor, topk_ids: torch.Tensor,
-                 apply_router_weight_on_input: bool) -> None:
+    def prepare(
+        self,
+        a1: torch.Tensor,
+        a1_scale: Optional[torch.Tensor],
+        a2_scale: Optional[torch.Tensor],
+        rank_topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        num_experts: int,
+        expert_map: Optional[torch.Tensor],
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = UBStage.nop.value,
+        ubatch_slice: int = -1,
+        #
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        _ = self.prepare_a(
+            a1,
+            a1_scale,
+            a2_scale,
+            rank_topk_weights,
+            rank_topk_ids,
+            num_experts,
+            expert_map,
+            apply_router_weight_on_input,
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
+        )
+        return self.prepare_b(
+            a1,
+            a1_scale,
+            a2_scale,
+            rank_topk_weights,
+            rank_topk_ids,
+            num_experts,
+            expert_map,
+            apply_router_weight_on_input,
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
+        )
 
-        assert self.handle is not None
+    def finalize_a(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = UBStage.nop.value,
+        ubatch_slice: int = -1,
+        #
+    ) -> UBContext:
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+        buffer = self.buffers[ubatch_slice]
+        handle = ubatch_ctx.handle
+        assert handle is not None
 
         combine_topk_weights = topk_weights
         if apply_router_weight_on_input:
@@ -175,12 +270,65 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             combine_topk_weights = torch.ones_like(topk_weights)
 
         # TODO (varun) : Enable zero copy mode
-        _, event, hook = self.buffer.low_latency_combine(
+        _, event, hook = buffer.low_latency_combine(
             fused_expert_output,
             topk_ids,
             combine_topk_weights,
-            self.handle,
+            handle,
             async_finish=False,
             zero_copy=False,
-            return_recv_hook=False,
-            out=output)
+            return_recv_hook=True,
+            out=output,
+        )
+
+        ubatch_ctx.event = event
+        ubatch_ctx.hook = hook
+        return ubatch_ctx
+
+    def finalize_b(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = UBStage.nop.value,
+        ubatch_slice: int = -1,
+        #
+    ) -> None:
+        ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
+
+        hook = ubatch_ctx.hook
+        hook()
+
+    def finalize(
+        self,
+        output: torch.Tensor,
+        fused_expert_output: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        apply_router_weight_on_input: bool,
+        #
+        ubatch_stage: int = UBStage.nop.value,
+        ubatch_slice: int = -1,
+        #
+    ) -> None:
+        _ = self.finalize_a(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
+        )
+        return self.finalize_a(
+            output,
+            fused_expert_output,
+            topk_weights,
+            topk_ids,
+            apply_router_weight_on_input,
+            ubatch_stage=ubatch_stage,
+            ubatch_slice=ubatch_slice,
+        )
