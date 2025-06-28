@@ -1002,7 +1002,6 @@ class DeepseekV2Model(nn.Module):
                 ["hidden_states", "residual"], config.hidden_size))
         self.use_dp = vllm_config.parallel_config.data_parallel_size > 1
 
-    # @torch.compiler.disable
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
