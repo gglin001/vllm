@@ -188,8 +188,9 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         ubatch_ctx.expert_x_scale = expert_x_scale
         ubatch_ctx.a1q = a1q
         ubatch_ctx.a1q_scale = a1q_scale
-        ubatch_ctx.rank_topk_ids = rank_topk_ids
+        ubatch_ctx.topk_ids = topk_ids
         ubatch_ctx.bound_m = bound_m
+        ubatch_ctx.orig_a_scale_block_shape = orig_a_scale_block_shape
         return ubatch_ctx
 
     def prepare_b(
@@ -197,8 +198,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         a1: torch.Tensor,
         a1_scale: Optional[torch.Tensor],
         a2_scale: Optional[torch.Tensor],
-        rank_topk_weights: torch.Tensor,
-        rank_topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
@@ -213,6 +214,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         expert_num_tokens = ubatch_ctx.expert_num_tokens
         expert_x = ubatch_ctx.expert_x
         expert_x_scale = ubatch_ctx.expert_x_scale
+        orig_a_scale_block_shape = ubatch_ctx.orig_a_scale_block_shape
 
         self.a2a.dispatch(
             out_expert_num_tokens=ubatch_ctx.expert_num_tokens,
@@ -220,7 +222,7 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             out_expert_x_scale=ubatch_ctx.expert_x_scale,
             dp_x=ubatch_ctx.a1q,
             dp_x_scale=ubatch_ctx.a1q_scale,
-            indices=ubatch_ctx.rank_topk_ids,
+            indices=ubatch_ctx.topk_ids,
             bound_m=ubatch_ctx.bound_m,
             #
             do_send=False,
@@ -237,8 +239,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         a1: torch.Tensor,
         a1_scale: Optional[torch.Tensor],
         a2_scale: Optional[torch.Tensor],
-        rank_topk_weights: torch.Tensor,
-        rank_topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
@@ -251,8 +253,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             a1,
             a1_scale,
             a2_scale,
-            rank_topk_weights,
-            rank_topk_ids,
+            topk_weights,
+            topk_ids,
             num_experts,
             expert_map,
             apply_router_weight_on_input,
@@ -265,8 +267,8 @@ class PplxPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             a1,
             a1_scale,
             a2_scale,
-            rank_topk_weights,
-            rank_topk_ids,
+            topk_weights,
+            topk_ids,
             num_experts,
             expert_map,
             apply_router_weight_on_input,
