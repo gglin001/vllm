@@ -214,6 +214,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         num_experts: int,
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
+        quant_config: FusedMoEQuantConfig,
         #
         ubatch_stage: int = UBStage.nop.value,
         ubatch_slice: int = -1,
@@ -229,6 +230,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             num_experts,
             expert_map,
             apply_router_weight_on_input,
+            quant_config,
             ubatch_stage=ubatch_stage,
             ubatch_slice=ubatch_slice,
         )
@@ -241,6 +243,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             num_experts,
             expert_map,
             apply_router_weight_on_input,
+            quant_config,
             ubatch_stage=ubatch_stage,
             ubatch_slice=ubatch_slice,
         )
