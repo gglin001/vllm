@@ -85,7 +85,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             has_scales = token_scales is not None
 
             (num_tokens_per_rank, num_tokens_per_rdma_rank, expert_num_tokens,
-            is_token_in_rank, event) = self.buffer.get_dispatch_layout(
+            is_token_in_rank, event) = buffer.get_dispatch_layout(
                 topk_idx=topk_ids,
                 num_experts=num_experts,
                 previous_event=previous_event,

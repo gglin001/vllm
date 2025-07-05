@@ -641,6 +641,7 @@ class FusedMoEModularKernel(torch.nn.Module):
                 global_num_experts,
                 expert_map,
                 apply_router_weight_on_input,
+                self.fused_experts.quant_config,
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
             )
@@ -657,6 +658,7 @@ class FusedMoEModularKernel(torch.nn.Module):
                  global_num_experts,
                  expert_map,
                  apply_router_weight_on_input,
+                 self.fused_experts.quant_config,
                  ubatch_stage=ubatch_stage,
                  ubatch_slice=ubatch_slice,
              )
