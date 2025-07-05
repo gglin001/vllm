@@ -1010,8 +1010,6 @@ class DeepseekV2Model(nn.Module):
                 enable_eplb=enable_eplb,
             ),
             prefix=f"{prefix}.layers")
-        for idx, layer in enumerate(self.layers[1:]):
-            layer.prev_layer = self.layers[idx - 1]
 
         if get_pp_group().is_last_rank:
             self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -1023,6 +1021,10 @@ class DeepseekV2Model(nn.Module):
         self.use_dp = vllm_config.parallel_config.data_parallel_size > 1
         self.first_k_dense_replace = self.config.first_k_dense_replace
         self.layer_idx_end = config.num_hidden_layers - 1
+
+    def post_init(self):
+        for layer in self.layers[1:]:
+            layer.prev_layer = self.layers[layer.layer_idx - 1]
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
@@ -1212,6 +1214,9 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         self.num_routed_experts = example_moe.n_routed_experts
         self.num_shared_experts = example_moe.n_shared_experts
         self.num_redundant_experts = example_moe.n_redundant_experts
+
+    def post_init(self):
+        self.model.post_init()
 
     def set_eplb_state(
         self,

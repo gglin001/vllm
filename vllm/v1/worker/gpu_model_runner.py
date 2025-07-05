@@ -1921,6 +1921,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.parallel_config,
             )
 
+        if not hasattr(self.model, "post_init"):
+            self.model.post_init()
+
     def save_tensorized_model(
         self,
         tensorizer_config: "TensorizerConfig",
