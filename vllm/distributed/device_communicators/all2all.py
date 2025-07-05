@@ -265,6 +265,8 @@ class DeepEPLLAll2AllManager(DeepEPAll2AllManagerBase):
         The kwargs for DeepEPLLAll2AllManager is dictated by
         _make_all2all_kwargs.
         """
+        raise Exception("shouel use `get_handles`")
+
         import deep_ep
         buffer_kwargs = self._make_all2all_kwargs(**kwargs)
         logger.debug("DeepEP all2all args %s", buffer_kwargs)
@@ -276,3 +278,15 @@ class DeepEPLLAll2AllManager(DeepEPAll2AllManagerBase):
         # in get_or_create must be updated.
         handle.set_num_sms(self.num_sms)
         return handle
+
+    def get_handles(self, kwargs):
+        import deep_ep
+        buffer_kwargs = self._make_all2all_kwargs(**kwargs)
+        logger.debug("DeepEP all2all args %s", buffer_kwargs)
+        handle_0 = self.handle_caches[0].get_or_create(buffer_kwargs,
+                                                       deep_ep.Buffer)
+        handle_1 = self.handle_caches[1].get_or_create(buffer_kwargs,
+                                                       deep_ep.Buffer)
+        handle_2 = self.handle_caches[2].get_or_create(buffer_kwargs,
+                                                       deep_ep.Buffer)
+        return [handle_0, handle_1, handle_2]
