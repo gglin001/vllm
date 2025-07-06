@@ -141,7 +141,8 @@ class DeepEPAll2AllManagerBase(All2AllManagerBase):
 
         # This is the DeepEP default. Stick to it till we can establish
         # reasonable defaults based on profiling.
-        self.num_sms = 20
+        # self.num_sms = 20
+        self.num_sms = 16
 
     def get_handle(self, kwargs):
         raise NotImplementedError
