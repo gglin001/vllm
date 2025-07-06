@@ -209,8 +209,8 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             _ = self._do_dispatch(
                 tokens=a1q,
                 token_scales=a1q_scale,
-                topk_ids=topk_ids,
-                topk_weights=topk_weights,
+                rank_topk_ids=topk_ids,
+                rank_topk_weights=topk_weights,
                 num_experts=num_experts,
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
@@ -222,8 +222,8 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             _ = self._do_dispatch(
                 tokens=a1,
                 token_scales=None,
-                topk_ids=topk_ids,
-                topk_weights=topk_weights,
+                rank_topk_ids=topk_ids,
+                rank_topk_weights=topk_weights,
                 num_experts=num_experts,
                 ubatch_stage=ubatch_stage,
                 ubatch_slice=ubatch_slice,
