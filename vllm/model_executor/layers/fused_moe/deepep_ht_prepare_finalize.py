@@ -27,7 +27,6 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
     ):
         super().__init__()
         # self.buffer = buffer
-        self.world_size = world_size
         self.num_dispatchers_ = num_dispatchers
         self.dp_size = dp_size
         self.rank_expert_offset = rank_expert_offset
