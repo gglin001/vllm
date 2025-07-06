@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from typing import Optional, Union
 
 import deep_ep
@@ -7,7 +8,7 @@ import torch
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.utils import (
-    maybe_fix_scales, moe_kernel_quantize_input)
+    moe_kernel_quantize_input, normalize_batched_scales_shape)
 from vllm.model_executor.layers.fused_moe.ubatch_context import UBContext, UBStage
 
 # DeepEP kernels quantize dispatch inputs in 128 element chunks.
@@ -43,25 +44,26 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
     def __init__(self,
                  buffers: list[deep_ep.Buffer],
                  max_tokens_per_rank: int,
-                 world_size: int,
-                 dp_size: int,
+                 num_dispatchers: int,
                  use_fp8_dispatch: bool = False):
         super().__init__()
 
         # self.buffer = buffer
         self.max_tokens_per_rank = max_tokens_per_rank
-        self.world_size = world_size
-        self.dp_size = dp_size
         self.use_fp8_dispatch = use_fp8_dispatch
         # The dispatch function returns a handle that the combine function
         # requires. We store the handle here so it is available to the
         # combine function.
         # self.handle = None
+        self.num_dispatchers_ = num_dispatchers
 
         assert isinstance(buffers, list)
         assert len(buffers) == 3
         self.buffers = buffers
         self.ubatch_ctxs = [UBContext() for _ in range(2 + 1)]
+
+    def num_dispatchers(self) -> int:
+        return self.num_dispatchers_
 
     @property
     def activation_format(self) -> mk.FusedMoEActivationFormat:
@@ -97,8 +99,6 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         assert isinstance(x, torch.Tensor)
 
-        assert not per_act_token_quant
-
         num_experts, max_tokens, hidden_dim = x.size()
 
         # TODO (varun): Optimization - Use a batched version of quant
@@ -110,7 +110,7 @@ class DeepEPLLPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
         if quant_dtype is not None:
             assert x_scales is not None
-            x_scales = maybe_fix_scales(x_scales, num_experts)
+            x_scales = normalize_batched_scales_shape(x_scales, num_experts)
 
         return x, x_scales
 
