@@ -70,8 +70,8 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         self,
         tokens: torch.Tensor,
         token_scales: Optional[torch.Tensor],
-        topk_ids: torch.Tensor,
-        topk_weights: torch.Tensor,
+        rank_topk_ids: torch.Tensor,
+        rank_topk_weights: torch.Tensor,
         num_experts: int,
         #
         ubatch_stage: int = UBStage.nop.value,
@@ -88,7 +88,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
             (num_tokens_per_rank, num_tokens_per_rdma_rank, expert_num_tokens,
             is_token_in_rank, event) = buffer.get_dispatch_layout(
-                topk_idx=topk_ids,
+                topk_idx=rank_topk_ids,
                 num_experts=num_experts,
                 previous_event=previous_event,
                 async_finish=True,
@@ -108,8 +108,8 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                 num_tokens_per_rdma_rank=num_tokens_per_rdma_rank,
                 is_token_in_rank=is_token_in_rank,
                 num_tokens_per_expert=expert_num_tokens,
-                topk_idx=topk_ids,
-                topk_weights=topk_weights,
+                topk_idx=rank_topk_ids,
+                topk_weights=rank_topk_weights,
                 # expert_alignment rounds the number of tokens per expert
                 # to this value.
                 expert_alignment=1,
@@ -238,8 +238,7 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             #         per_act_token_quant=False,
             #         block_shape=quant_config.block_shape)
 
-        ubatch_ctx.per_token_quant = per_token_quant
-        if per_token_quant:
+        if quant_config.per_act_token_quant:
             ubatch_ctx.a1q = a1q
             ubatch_ctx.a1q_scale = a1q_scale
         else:
@@ -264,29 +263,19 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         ubatch_ctx = self.ubatch_ctxs[ubatch_slice]
-        per_token_quant = ubatch_ctx.per_token_quant
-        if per_token_quant:
+        if quant_config.per_act_token_quant:
             a1q = ubatch_ctx.a1q
             a1q_scale = ubatch_ctx.a1q_scale
         else:
             a1 = ubatch_ctx.a1
 
-        if per_token_quant:
-            a1q, a1q_scale = moe_kernel_quantize_input(
-                a1,
-                a1_scale,
-                quant_dtype=quant_config.quant_dtype,
-                per_act_token_quant=True,
-                block_shape=quant_config.block_shape,
-            )
-            if a1q_scale is not None and a1q_scale.numel() == 1:
-                a1q_scale = a1q_scale.view(1, 1)
+        if quant_config.per_act_token_quant:
             (expert_x, expert_x_scale, expert_num_tokens, expert_topk_ids,
              expert_topk_weights) = self._do_dispatch(
                  tokens=a1q,
                  token_scales=a1q_scale,
-                 topk_ids=topk_ids,
-                 topk_weights=topk_weights,
+                 rank_topk_ids=topk_ids,
+                 rank_topk_weights=topk_weights,
                  num_experts=num_experts,
                  ubatch_stage=ubatch_stage,
                  ubatch_slice=ubatch_slice,
@@ -298,8 +287,8 @@ class DeepEPHTPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
              expert_topk_weights) = self._do_dispatch(
                  tokens=a1,
                  token_scales=None,
-                 topk_ids=topk_ids,
-                 topk_weights=topk_weights,
+                 rank_topk_ids=topk_ids,
+                 rank_topk_weights=topk_weights,
                  num_experts=num_experts,
                  ubatch_stage=ubatch_stage,
                  ubatch_slice=ubatch_slice,
